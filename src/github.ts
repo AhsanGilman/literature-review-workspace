@@ -452,3 +452,125 @@ export async function syncFromGitHub(
 
   onProgress?.('Sync from GitHub completed successfully!');
 }
+
+export async function uploadSinglePaperToGitHub(
+  userEmail: string,
+  projectId: string,
+  paper: {
+    id: string;
+    title: string;
+    authors: string;
+    journal: string;
+    year: string;
+    tags: string[];
+    fileData: File | Blob;
+    fileName: string;
+    createdAt: number;
+    updatedAt: number;
+  },
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  const token = DEFAULT_TOKEN;
+  const repo = DEFAULT_REPO;
+  if (!token || !repo) {
+    throw new Error('GitHub Sync is not configured.');
+  }
+
+  onProgress?.('Connecting to remote repository...');
+  const branch = await ensureRepoExists(token, repo);
+  const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
+
+  // Get current GitHub files and their SHAs
+  onProgress?.('Fetching remote repository tree...');
+  const remoteTree = await getRepoTree(token, repo, branch);
+
+  // Helper to convert UTF-8 string to Base64 (safely handling Unicode)
+  const toBase64 = (str: string) => {
+    const bytes = new TextEncoder().encode(str);
+    let binString = '';
+    bytes.forEach((b) => {
+      binString += String.fromCharCode(b);
+    });
+    return btoa(binString);
+  };
+
+  // 1. Upload PDF file
+  onProgress?.('Uploading PDF to GitHub...');
+  const pdfPath = `${prefix}papers/${paper.id}.pdf`;
+  const base64Content = await blobToBase64(paper.fileData);
+  await uploadFileToGitHub(
+    token,
+    repo,
+    pdfPath,
+    base64Content,
+    `Upload PDF for paper: ${paper.title.slice(0, 50)}`,
+    remoteTree[pdfPath]?.sha
+  );
+
+  // 2. Upload initial empty note file
+  onProgress?.('Uploading note file to GitHub...');
+  const notePath = `${prefix}notes/${paper.id}.md`;
+  const mdContent = `---
+title: "${paper.title.replace(/"/g, '\\"')}"
+paperId: "${paper.id}"
+projectId: "${projectId}"
+updatedAt: ${paper.updatedAt}
+---
+
+`;
+  await uploadFileToGitHub(
+    token,
+    repo,
+    notePath,
+    toBase64(mdContent),
+    `Upload initial note for paper: ${paper.title.slice(0, 50)}`,
+    remoteTree[notePath]?.sha
+  );
+
+  // 3. Update papers metadata
+  onProgress?.('Updating papers metadata on GitHub...');
+  const localPapers = await db.papers.toArray();
+  // Filter out fileData for the metadata file, and append the new one
+  const papersMetadata = [
+    ...localPapers.map(({ fileData, ...meta }) => meta),
+    {
+      id: paper.id,
+      projectId,
+      title: paper.title,
+      authors: paper.authors,
+      journal: paper.journal,
+      year: paper.year,
+      tags: paper.tags,
+      fileName: paper.fileName,
+      createdAt: paper.createdAt,
+      updatedAt: paper.updatedAt,
+    }
+  ];
+  const papersMetadataData = JSON.stringify(papersMetadata, null, 2);
+  await uploadFileToGitHub(
+    token,
+    repo,
+    `${prefix}papers_metadata.json`,
+    toBase64(papersMetadataData),
+    'Update papers metadata with new paper',
+    remoteTree[`${prefix}papers_metadata.json`]?.sha
+  );
+
+  // 4. Update projects metadata
+  onProgress?.('Updating projects metadata on GitHub...');
+  const localProjects = await db.projects.toArray();
+  const updatedProjects = localProjects.map((p) =>
+    p.id === projectId ? { ...p, updatedAt: paper.updatedAt } : p
+  );
+  const projectsData = JSON.stringify(updatedProjects, null, 2);
+  await uploadFileToGitHub(
+    token,
+    repo,
+    `${prefix}projects.json`,
+    toBase64(projectsData),
+    'Update projects metadata timestamp',
+    remoteTree[`${prefix}projects.json`]?.sha
+  );
+
+  onProgress?.('GitHub upload successful!');
+}

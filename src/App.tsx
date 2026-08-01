@@ -244,6 +244,7 @@ export const App: React.FC = () => {
         selectedPaperId={selectedPaperId}
         onSelectPaper={setSelectedPaperId}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        userEmail={user.email}
       />
 
       {/* Resize Handle 1 (Left-Middle) */}

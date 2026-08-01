@@ -56,7 +56,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({ paperId }) => {
         URL.revokeObjectURL(url);
       }
     };
-  }, [paper]);
+  }, [paperId, paper?.fileData]);
 
   // Self-healing title update: If the paper has a generic title (ends in .pdf, matches fileName, or is a short number), re-parse it
   useEffect(() => {

@@ -4,7 +4,7 @@ import type { Project, Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2, Edit3 } from 'lucide-react';
 import { parsePdfTitle } from '../pdfParser';
-import { isSyncConfigured } from '../github';
+import { isSyncConfigured, uploadSinglePaperToGitHub } from '../github';
 
 interface SidebarProps {
   currentProjectId: string;
@@ -12,6 +12,7 @@ interface SidebarProps {
   selectedPaperId: string;
   onSelectPaper: (id: string) => void;
   onOpenSettings: () => void;
+  userEmail: string;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -20,6 +21,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedPaperId,
   onSelectPaper,
   onOpenSettings,
+  userEmail,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -37,6 +39,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [paperJournal, setPaperJournal] = useState('');
   const [paperYear, setPaperYear] = useState('');
   const [paperTags, setPaperTags] = useState('');
+
+  // Progress overlay for GitHub pre-upload
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -122,8 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const paperId = `paper-${Date.now()}-${i}`;
         const detectedTitle = await parsePdfTitle(file, file.name);
 
-        // Save paper metadata and content to IndexedDB
-        await db.papers.add({
+        const paperObj = {
           id: paperId,
           projectId: currentProjectId,
           title: detectedTitle,
@@ -135,7 +139,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           fileName: file.name,
           createdAt: Date.now(),
           updatedAt: Date.now(),
-        });
+        };
+
+        if (isSyncConfigured() && userEmail) {
+          setUploadProgress(`Uploading ${i + 1}/${files.length}: ${detectedTitle.slice(0, 30)}...`);
+          await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg) => {
+            setUploadProgress(`[${i + 1}/${files.length}] ${msg}`);
+          });
+        }
+
+        // Save paper metadata and content to IndexedDB only after successful GitHub upload!
+        await db.papers.add(paperObj);
 
         // Save default blank note for this paper
         await db.notes.add({
@@ -148,10 +162,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         });
 
         importedCount++;
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error batch importing file:', file.name, err);
+        alert(`Failed to upload ${file.name} to GitHub: ${err.message || err}. Skipping.`);
       }
     }
+
+    setUploadProgress(null);
 
     if (importedCount > 0) {
       // Update project timestamp
@@ -170,8 +187,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       .map((t) => t.trim().toLowerCase())
       .filter((t) => t.length > 0);
 
-    // Save paper metadata and content to IndexedDB
-    await db.papers.add({
+    const paperObj = {
       id: paperId,
       projectId: currentProjectId,
       title: paperTitle.trim(),
@@ -183,7 +199,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
       fileName: pendingFile.name,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    });
+    };
+
+    if (isSyncConfigured() && userEmail) {
+      setUploadProgress('Uploading paper to GitHub...');
+      try {
+        await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg) => {
+          setUploadProgress(msg);
+        });
+      } catch (err: any) {
+        console.error(err);
+        alert(`Upload to GitHub failed: ${err.message || err}. Paper was not saved.`);
+        setUploadProgress(null);
+        return;
+      }
+      setUploadProgress(null);
+    }
+
+    // Save paper metadata and content to IndexedDB only after successful GitHub upload!
+    await db.papers.add(paperObj);
 
     // Save default blank note for this paper
     await db.notes.add({
@@ -692,6 +726,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      
+      {/* Upload Loader Overlay */}
+      {uploadProgress && (
+        <div className="upload-loader-overlay">
+          <div className="upload-loader-card">
+            <div className="upload-loader-spinner" />
+            <div className="upload-loader-text">{uploadProgress}</div>
           </div>
         </div>
       )}
