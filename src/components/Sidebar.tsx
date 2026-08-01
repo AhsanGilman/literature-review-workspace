@@ -3,6 +3,7 @@ import { db } from '../db';
 import type { Project, Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2, Edit3 } from 'lucide-react';
+import { PDFDocument } from 'pdf-lib';
 
 // Decodes common HTML entities
 function decodeHtmlEntities(str: string): string {
@@ -15,74 +16,56 @@ function decodeHtmlEntities(str: string): string {
     .replace(/&#x27;/g, "'");
 }
 
-// Parses the actual title of the PDF document from metadata
+// Parses the actual title of the PDF document from metadata using pdf-lib or falls back to regex / filename
 async function parsePdfTitle(file: File): Promise<string> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result as string;
-      
-      // 1. Try DC XML title (academic metadata block)
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    // Load metadata only, ignore encryption for speed
+    const pdfDoc = await PDFDocument.load(arrayBuffer, { 
+      updateMetadata: false, 
+      ignoreEncryption: true 
+    });
+    const title = pdfDoc.getTitle();
+    if (title && title.trim().length > 3 && !title.toLowerCase().includes('untitled')) {
+      return title.trim();
+    }
+  } catch (error) {
+    console.warn('pdf-lib failed to extract title, attempting regex fallback:', error);
+    
+    // Regex fallback in case pdf-lib parsing fails on corrupted metadata blocks
+    try {
+      const slice = file.slice(0, 1024 * 1024);
+      const text = await new Promise<string>((resolve) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = () => resolve('');
+        r.readAsText(slice, 'latin1'); // read as latin1 to preserve raw bytes safely
+      });
+
+      // Try DC XML title (academic metadata block)
       const xmlMatch = text.match(/<dc:title[^>]*>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/i);
       if (xmlMatch && xmlMatch[1]) {
         const clean = xmlMatch[1].trim().replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
         if (clean && clean.length > 3 && !clean.toLowerCase().includes('untitled')) {
-          resolve(decodeHtmlEntities(clean));
-          return;
+          return decodeHtmlEntities(clean);
         }
       }
 
-      // 2. Try PDF Title attribute literal: /Title (Some Title)
+      // Try PDF Title attribute literal: /Title (Some Title)
       const literalMatch = text.match(/\/Title\s*\(([^)]+)\)/);
       if (literalMatch && literalMatch[1]) {
         const clean = literalMatch[1].trim();
         if (clean && clean.length > 3 && !clean.toLowerCase().includes('untitled')) {
-          resolve(clean);
-          return;
+          return clean;
         }
       }
+    } catch (e) {
+      console.error('Regex fallback failed:', e);
+    }
+  }
 
-      // 3. Try PDF Title hex format: /Title <FEFF0043...>
-      const hexMatch = text.match(/\/Title\s*<([0-9a-fA-F]+)>/);
-      if (hexMatch && hexMatch[1]) {
-        const hex = hexMatch[1];
-        let title = '';
-        try {
-          if (hex.startsWith('feff') || hex.startsWith('FEFF')) {
-            for (let i = 4; i < hex.length; i += 4) {
-              const code = parseInt(hex.substring(i, i + 4), 16);
-              title += String.fromCharCode(code);
-            }
-          } else {
-            for (let i = 0; i < hex.length; i += 2) {
-              const code = parseInt(hex.substring(i, i + 2), 16);
-              title += String.fromCharCode(code);
-            }
-          }
-          const clean = title.trim();
-          if (clean && clean.length > 3 && !clean.toLowerCase().includes('untitled')) {
-            resolve(clean);
-            return;
-          }
-        } catch (e) {
-          console.error('Error parsing hex title', e);
-        }
-      }
-
-      // Fallback: Filename without extension
-      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
-      resolve(nameWithoutExt);
-    };
-
-    reader.onerror = () => {
-      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
-      resolve(nameWithoutExt);
-    };
-
-    // Read first 1MB for metadata
-    const slice = file.slice(0, 1024 * 1024);
-    reader.readAsText(slice, 'binary');
-  });
+  // Fallback: Filename without extension
+  return file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
 }
 
 interface SidebarProps {
