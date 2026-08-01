@@ -19,44 +19,63 @@ export const PDFReader: React.FC<PDFReaderProps> = ({ paperId }) => {
   ) as Paper | undefined;
 
   useEffect(() => {
-    if (!paper) {
+    if (!paperId) {
       setBlobUrl(null);
       return;
     }
 
     setLoading(true);
     let url = '';
-    try {
-      let fileBlob: Blob;
-      if (typeof paper.fileData === 'string') {
-        // Decode base64 to Blob for old uploads
-        const base64Data = (paper.fileData as string).includes(',')
-          ? (paper.fileData as string).split(',')[1]
-          : (paper.fileData as string);
-        const byteCharacters = atob(base64Data);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        fileBlob = new Blob([byteArray], { type: 'application/pdf' });
-      } else {
-        fileBlob = paper.fileData;
+    let isCancelled = false;
+
+    db.papers.get(paperId).then((paperData) => {
+      if (!paperData) {
+        if (!isCancelled) setLoading(false);
+        return;
       }
-      url = URL.createObjectURL(fileBlob);
-      setBlobUrl(url);
-    } catch (error) {
-      console.error('Error generating PDF Blob URL:', error);
-    } finally {
-      setLoading(false);
-    }
+      if (isCancelled) return;
+
+      try {
+        let fileBlob: Blob;
+        if (typeof paperData.fileData === 'string') {
+          // Decode base64 to Blob for old uploads
+          const base64Data = (paperData.fileData as string).includes(',')
+            ? (paperData.fileData as string).split(',')[1]
+            : (paperData.fileData as string);
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          fileBlob = new Blob([byteArray], { type: 'application/pdf' });
+        } else {
+          fileBlob = paperData.fileData;
+        }
+        
+        const generatedUrl = URL.createObjectURL(fileBlob);
+        if (isCancelled) {
+          URL.revokeObjectURL(generatedUrl);
+          return;
+        }
+        url = generatedUrl;
+        setBlobUrl(url);
+      } catch (error) {
+        console.error('Error generating PDF Blob URL:', error);
+      } finally {
+        if (!isCancelled) {
+          setLoading(false);
+        }
+      }
+    });
 
     return () => {
+      isCancelled = true;
       if (url) {
         URL.revokeObjectURL(url);
       }
     };
-  }, [paperId, paper?.fileData]);
+  }, [paperId]);
 
   // Self-healing title update: If the paper has a generic title (ends in .pdf, matches fileName, or is a short number), re-parse it
   useEffect(() => {
