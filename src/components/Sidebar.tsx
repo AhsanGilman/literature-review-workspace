@@ -4,7 +4,7 @@ import type { Project, Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2, Edit3 } from 'lucide-react';
 import { parsePdfTitle } from '../pdfParser';
-import { isSyncConfigured, uploadSinglePaperToGitHub } from '../github';
+import { isSyncConfigured, uploadSinglePaperToGitHub, uploadMetadataToGitHub } from '../github';
 
 interface SidebarProps {
   currentProjectId: string;
@@ -118,6 +118,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Process multiple files in batch (no interrupting modals!)
   const handleMultipleFiles = async (files: FileList) => {
     let importedCount = 0;
+    const newPapersMetadata: Omit<Paper, 'fileData'>[] = [];
+    const papersToSaveLocally: Paper[] = [];
+    const now = Date.now();
     
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -137,30 +140,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
           tags: [],
           fileData: file, // Save raw file object directly
           fileName: file.name,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
+          createdAt: now,
+          updatedAt: now,
         };
 
         if (isSyncConfigured() && userEmail) {
           setUploadProgress(`Uploading ${i + 1}/${files.length}: ${detectedTitle.slice(0, 30)}...`);
+          // Pass skipMetadataUpdate = true to skip single-file metadata commits
           await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg) => {
             setUploadProgress(`[${i + 1}/${files.length}] ${msg}`);
-          });
+          }, true);
         }
 
-        // Save paper metadata and content to IndexedDB only after successful GitHub upload!
-        await db.papers.add(paperObj);
-
-        // Save default blank note for this paper
-        await db.notes.add({
-          id: paperId, // 1-to-1 matching id
-          paperId,
-          projectId: currentProjectId,
-          content: '',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-
+        const { fileData, ...meta } = paperObj;
+        newPapersMetadata.push(meta);
+        papersToSaveLocally.push(paperObj);
         importedCount++;
       } catch (err: any) {
         console.error('Error batch importing file:', file.name, err);
@@ -168,13 +162,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
     }
 
-    setUploadProgress(null);
-
     if (importedCount > 0) {
+      if (isSyncConfigured() && userEmail) {
+        setUploadProgress('Uploading combined metadata to GitHub...');
+        try {
+          // Upload updated metadata lists ONCE in bulk
+          await uploadMetadataToGitHub(userEmail, currentProjectId, newPapersMetadata, now, (msg) => {
+            setUploadProgress(msg);
+          });
+        } catch (err: any) {
+          console.error(err);
+          alert(`Failed to upload metadata to GitHub: ${err.message || err}. Local files were not saved.`);
+          setUploadProgress(null);
+          return;
+        }
+      }
+
+      // Save all papers and notes locally
+      for (const paperObj of papersToSaveLocally) {
+        await db.papers.add(paperObj);
+        await db.notes.add({
+          id: paperObj.id,
+          paperId: paperObj.id,
+          projectId: currentProjectId,
+          content: '',
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
       // Update project timestamp
-      await db.projects.update(currentProjectId, { updatedAt: Date.now() });
-      alert(`Successfully imported ${importedCount} papers! You can edit their metadata anytime by clicking the edit icon.`);
+      await db.projects.update(currentProjectId, { updatedAt: now });
+      alert(`Successfully imported ${importedCount} papers!`);
     }
+
+    setUploadProgress(null);
   };
 
   const handleSavePaper = async (e: React.FormEvent) => {

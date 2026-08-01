@@ -486,7 +486,8 @@ export async function uploadSinglePaperToGitHub(
     createdAt: number;
     updatedAt: number;
   },
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  skipMetadataUpdate = false
 ): Promise<void> {
   const token = DEFAULT_TOKEN;
   const repo = DEFAULT_REPO;
@@ -495,12 +496,8 @@ export async function uploadSinglePaperToGitHub(
   }
 
   onProgress?.('Connecting to remote repository...');
-  const branch = await ensureRepoExists(token, repo);
+  await ensureRepoExists(token, repo);
   const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
-
-  // Get current GitHub files and their SHAs
-  onProgress?.('Fetching remote repository tree...');
-  const remoteTree = await getRepoTree(token, repo, branch);
 
   // Helper to convert UTF-8 string to Base64 (safely handling Unicode)
   const toBase64 = (str: string) => {
@@ -521,8 +518,7 @@ export async function uploadSinglePaperToGitHub(
     repo,
     pdfPath,
     base64Content,
-    `Upload PDF for paper: ${paper.title.slice(0, 50)}`,
-    remoteTree[pdfPath]?.sha
+    `Upload PDF for paper: ${paper.title.slice(0, 50)}`
   );
 
   // 2. Upload initial empty note file
@@ -541,9 +537,13 @@ updatedAt: ${paper.updatedAt}
     repo,
     notePath,
     toBase64(mdContent),
-    `Upload initial note for paper: ${paper.title.slice(0, 50)}`,
-    remoteTree[notePath]?.sha
+    `Upload initial note for paper: ${paper.title.slice(0, 50)}`
   );
+
+  if (skipMetadataUpdate) {
+    onProgress?.('PDF & Note uploaded successfully!');
+    return;
+  }
 
   // 3. Update papers metadata
   onProgress?.('Updating papers metadata on GitHub...');
@@ -570,8 +570,7 @@ updatedAt: ${paper.updatedAt}
     repo,
     `${prefix}papers_metadata.json`,
     toBase64(papersMetadataData),
-    'Update papers metadata with new paper',
-    remoteTree[`${prefix}papers_metadata.json`]?.sha
+    'Update papers metadata with new paper'
   );
 
   // 4. Update projects metadata
@@ -586,9 +585,68 @@ updatedAt: ${paper.updatedAt}
     repo,
     `${prefix}projects.json`,
     toBase64(projectsData),
-    'Update projects metadata timestamp',
-    remoteTree[`${prefix}projects.json`]?.sha
+    'Update projects metadata timestamp'
   );
 
   onProgress?.('GitHub upload successful!');
+}
+
+export async function uploadMetadataToGitHub(
+  userEmail: string,
+  projectId: string,
+  newPapers: Omit<Paper, 'fileData'>[],
+  updatedAt: number,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  const token = DEFAULT_TOKEN;
+  const repo = DEFAULT_REPO;
+  if (!token || !repo) {
+    throw new Error('GitHub Sync is not configured.');
+  }
+
+  const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
+
+  // Helper to convert UTF-8 string to Base64 (safely handling Unicode)
+  const toBase64 = (str: string) => {
+    const bytes = new TextEncoder().encode(str);
+    let binString = '';
+    bytes.forEach((b) => {
+      binString += String.fromCharCode(b);
+    });
+    return btoa(binString);
+  };
+
+  // 1. Update papers metadata
+  onProgress?.('Updating papers metadata on GitHub...');
+  const localPapers = await db.papers.toArray();
+  // Combine existing local papers and new batch papers
+  const papersMetadata = [
+    ...localPapers.map(({ fileData, ...meta }) => meta),
+    ...newPapers
+  ];
+  const papersMetadataData = JSON.stringify(papersMetadata, null, 2);
+  await uploadFileToGitHub(
+    token,
+    repo,
+    `${prefix}papers_metadata.json`,
+    toBase64(papersMetadataData),
+    'Update papers metadata (batch)'
+  );
+
+  // 2. Update projects metadata
+  onProgress?.('Updating projects metadata on GitHub...');
+  const localProjects = await db.projects.toArray();
+  const updatedProjects = localProjects.map((p) =>
+    p.id === projectId ? { ...p, updatedAt } : p
+  );
+  const projectsData = JSON.stringify(updatedProjects, null, 2);
+  await uploadFileToGitHub(
+    token,
+    repo,
+    `${prefix}projects.json`,
+    toBase64(projectsData),
+    'Update projects metadata timestamp (batch)'
+  );
+
+  onProgress?.('GitHub metadata upload successful!');
 }
