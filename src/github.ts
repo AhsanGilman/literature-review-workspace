@@ -1,7 +1,11 @@
 import { db, type Project, type Paper } from './db';
 
-const DEFAULT_TOKEN = (import.meta as any).env.VITE_GITHUB_PAT || '';
-const DEFAULT_REPO = (import.meta as any).env.VITE_GITHUB_REPO || 'AhsanGilman/literature-review-workspace';
+export const DEFAULT_TOKEN = (import.meta as any).env.VITE_GITHUB_PAT || '';
+export const DEFAULT_REPO = (import.meta as any).env.VITE_GITHUB_REPO || 'AhsanGilman/literature-review-workspace';
+
+export function isSyncConfigured(): boolean {
+  return !!DEFAULT_TOKEN && !!DEFAULT_REPO;
+}
 
 interface GitHubFile {
   path: string;

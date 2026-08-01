@@ -4,6 +4,7 @@ import type { Project, Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2, Edit3 } from 'lucide-react';
 import { parsePdfTitle } from '../pdfParser';
+import { isSyncConfigured } from '../github';
 
 interface SidebarProps {
   currentProjectId: string;
@@ -335,6 +336,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </select>
             </div>
           </div>
+
+          {!isSyncConfigured() && (
+            <div style={{
+              fontSize: '0.75rem',
+              color: '#d19a66',
+              backgroundColor: 'rgba(209, 154, 102, 0.08)',
+              border: '1px solid rgba(209, 154, 102, 0.25)',
+              borderRadius: 'var(--radius-md)',
+              padding: '8px 12px',
+              marginBottom: '14px',
+              lineHeight: '1.4',
+            }}>
+              ⚠️ <strong>Sync Disabled</strong>
+              <div style={{ marginTop: '2px', color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
+                GitHub Token is not configured. Data is saved in this browser only.
+              </div>
+            </div>
+          )}
 
           {/* Search bar */}
           <div style={{ position: 'relative', marginBottom: '12px' }}>
