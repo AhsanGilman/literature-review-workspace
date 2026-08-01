@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { db } from '../db';
 import type { Project, Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2 } from 'lucide-react';
+import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2, Edit3 } from 'lucide-react';
 
 interface SidebarProps {
   currentProjectId: string;
@@ -29,6 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Form for paper metadata editing when uploading
   const [pendingFile, setPendingFile] = useState<{ file: File; base64: string } | null>(null);
+  const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
   const [paperTitle, setPaperTitle] = useState('');
   const [paperAuthors, setPaperAuthors] = useState('');
   const [paperJournal, setPaperJournal] = useState('');
@@ -81,13 +82,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // Convert File to Base64
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || file.type !== 'application/pdf') return;
-    processFile(file);
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (files.length === 1) {
+      processFile(files[0]);
+    } else {
+      await handleMultipleFiles(files);
+    }
   };
 
   const processFile = (file: File) => {
+    if (file.type !== 'application/pdf') return;
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = reader.result as string;
@@ -101,6 +108,64 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setPaperTags('');
     };
     reader.readAsDataURL(file);
+  };
+
+  // Process multiple files in batch (no interrupting modals!)
+  const handleMultipleFiles = async (files: FileList) => {
+    let importedCount = 0;
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type !== 'application/pdf') continue;
+
+      await new Promise<void>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          try {
+            const base64 = reader.result as string;
+            const paperId = `paper-${Date.now()}-${i}`;
+            const titleWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+
+            // Save paper metadata and content to IndexedDB
+            await db.papers.add({
+              id: paperId,
+              projectId: currentProjectId,
+              title: titleWithoutExt,
+              authors: '',
+              journal: '',
+              year: new Date().getFullYear().toString(),
+              tags: [],
+              fileData: base64,
+              fileName: file.name,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+
+            // Save default blank note for this paper
+            await db.notes.add({
+              id: paperId, // 1-to-1 matching id
+              paperId,
+              projectId: currentProjectId,
+              content: `# ${titleWithoutExt}\n\n*Authors: *\n*Journal: (${new Date().getFullYear().toString()})*\n\n## Abstract / Summary\n\n[Write summary here]\n\n## Key Findings\n\n- Finding 1\n\n## Critiques / Questions\n\n- Critique 1`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+
+            importedCount++;
+          } catch (err) {
+            console.error('Error batch importing file:', file.name, err);
+          }
+          resolve();
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    if (importedCount > 0) {
+      // Update project timestamp
+      await db.projects.update(currentProjectId, { updatedAt: Date.now() });
+      alert(`Successfully imported ${importedCount} papers! You can edit their metadata anytime by clicking the edit icon.`);
+    }
   };
 
   const handleSavePaper = async (e: React.FormEvent) => {
@@ -145,6 +210,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onSelectPaper(paperId);
   };
 
+  const handleSaveEditPaper = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPaper) return;
+
+    const tagsArray = paperTags
+      .split(',')
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => t.length > 0);
+
+    await db.papers.update(editingPaper.id, {
+      title: paperTitle.trim(),
+      authors: paperAuthors.trim(),
+      journal: paperJournal.trim(),
+      year: paperYear.trim(),
+      tags: tagsArray,
+      updatedAt: Date.now(),
+    });
+
+    // Update project timestamp
+    await db.projects.update(currentProjectId, { updatedAt: Date.now() });
+    setEditingPaper(null);
+  };
+
   const handleDeletePaper = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm('Are you sure you want to delete this paper and its notes?')) {
@@ -160,11 +248,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     e.preventDefault();
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file && file.type === 'application/pdf') {
-      processFile(file);
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    if (files.length === 1) {
+      processFile(files[0]);
+    } else {
+      await handleMultipleFiles(files);
     }
   };
 
@@ -274,21 +366,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => fileInputRef.current?.click()}
         >
           <Upload className="upload-icon" size={24} />
-          <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>Drop PDF here or click</div>
-          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>PDF up to 50MB</div>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>Drop PDFs here or click</div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Multiple PDFs supported</div>
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleFileChange}
             accept="application/pdf"
             style={{ display: 'none' }}
+            multiple
           />
         </div>
 
         {/* File list */}
         {filteredPapers.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-            No papers found. Drag & drop a PDF to add.
+            No papers found. Drag & drop PDFs to add.
           </div>
         ) : (
           filteredPapers.map((paper) => (
@@ -299,14 +392,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                 <div className="paper-title">{paper.title}</div>
-                <button
-                  onClick={(e) => handleDeletePaper(paper.id, e)}
-                  className="tool-btn"
-                  style={{ padding: '2px', color: 'var(--text-muted)' }}
-                  title="Delete Paper"
-                >
-                  <Trash2 size={13} />
-                </button>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingPaper(paper);
+                      setPaperTitle(paper.title);
+                      setPaperAuthors(paper.authors);
+                      setPaperJournal(paper.journal);
+                      setPaperYear(paper.year);
+                      setPaperTags(paper.tags.join(', '));
+                    }}
+                    className="tool-btn"
+                    style={{ padding: '2px', color: 'var(--text-muted)' }}
+                    title="Edit Paper Details"
+                  >
+                    <Edit3 size={13} />
+                  </button>
+                  <button
+                    onClick={(e) => handleDeletePaper(paper.id, e)}
+                    className="tool-btn"
+                    style={{ padding: '2px', color: 'var(--text-muted)' }}
+                    title="Delete Paper"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
               <div className="paper-meta">
                 {paper.authors && <span>{paper.authors.split(',')[0]}</span>}
@@ -433,6 +544,79 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
                 <button type="submit" className="btn-primary" style={{ flex: 1 }}>
                   Import & Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Paper Edit Form Modal */}
+      {editingPaper && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ padding: '24px' }}>
+            <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.3rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FileText size={20} className="upload-icon" /> Edit Paper Details
+            </h3>
+            <form onSubmit={handleSaveEditPaper} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Document Title</label>
+                <input
+                  type="text"
+                  value={paperTitle}
+                  onChange={(e) => setPaperTitle(e.target.value)}
+                  className="input-field"
+                  required
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Authors (comma separated)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Bengio Y., LeCun Y., Hinton G."
+                  value={paperAuthors}
+                  onChange={(e) => setPaperAuthors(e.target.value)}
+                  className="input-field"
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Journal / Conference</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. NeurIPS"
+                    value={paperJournal}
+                    onChange={(e) => setPaperJournal(e.target.value)}
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Year</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 2024"
+                    value={paperYear}
+                    onChange={(e) => setPaperYear(e.target.value)}
+                    className="input-field"
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Tags (comma separated)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. NLP, transformer, attention"
+                  value={paperTags}
+                  onChange={(e) => setPaperTags(e.target.value)}
+                  className="input-field"
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button type="button" onClick={() => setEditingPaper(null)} className="btn-secondary" style={{ flex: 1 }}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" style={{ flex: 1 }}>
+                  Save Changes
                 </button>
               </div>
             </form>
