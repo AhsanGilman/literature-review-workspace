@@ -69,13 +69,8 @@ export const PDFReader: React.FC<PDFReaderProps> = ({ paperId }) => {
               whiteSpace: 'nowrap',
             }}
           >
-            {paper ? paper.title : 'Loading paper...'}
+            {paper ? (paper.fileName || paper.title) : 'Loading paper...'}
           </h3>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            {paper?.authors ? `${paper.authors.split(',')[0]} et al.` : ''}
-            {paper?.year ? ` (${paper.year})` : ''}
-            {paper?.journal ? ` · ${paper.journal}` : ''}
-          </span>
         </div>
       </div>
 

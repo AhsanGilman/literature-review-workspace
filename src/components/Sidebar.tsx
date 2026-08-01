@@ -137,7 +137,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: paperId, // 1-to-1 matching id
           paperId,
           projectId: currentProjectId,
-          content: `# ${titleWithoutExt}\n\n*Authors: *\n*Journal: (${new Date().getFullYear().toString()})*\n\n## Abstract / Summary\n\n[Write summary here]\n\n## Key Findings\n\n- Finding 1\n\n## Critiques / Questions\n\n- Critique 1`,
+          content: '',
           createdAt: Date.now(),
           updatedAt: Date.now(),
         });
@@ -185,7 +185,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: paperId, // 1-to-1 matching id
       paperId,
       projectId: currentProjectId,
-      content: `# ${paperTitle.trim()}\n\n*Authors: ${paperAuthors.trim()}*\n*Journal: ${paperJournal.trim()} (${paperYear.trim()})*\n\n## Abstract / Summary\n\n[Write summary here]\n\n## Key Findings\n\n- Finding 1\n\n## Critiques / Questions\n\n- Critique 1`,
+      content: '',
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -378,7 +378,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onSelectPaper(paper.id)}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                <div className="paper-title">{paper.title}</div>
+                <div className="paper-title">{paper.fileName || paper.title}</div>
                 <div style={{ display: 'flex', gap: '4px' }}>
                   <button
                     onClick={(e) => {
@@ -406,20 +406,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </button>
                 </div>
               </div>
-              <div className="paper-meta">
-                {paper.authors && <span>{paper.authors.split(',')[0]}</span>}
-                {paper.year && <span>({paper.year})</span>}
-                {paper.journal && <span style={{ fontStyle: 'italic' }}>{paper.journal}</span>}
-              </div>
-              {paper.tags && paper.tags.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-                  {paper.tags.map((t) => (
-                    <span key={t} className="paper-tag">
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
           ))
         )}

@@ -3,7 +3,7 @@ import { db, type Paper, type Note } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { marked } from 'marked';
 import { 
-  FileText, Eye, Edit3, Sparkles, Clipboard, Check, Quote, 
+  FileText, Eye, Edit3, Sparkles, 
   Bold, Italic, Heading1, Heading2, List, Code, Save, BrainCircuit, Plus
 } from 'lucide-react';
 
@@ -13,10 +13,10 @@ interface NoteEditorProps {
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) => {
-  const [activeTab, setActiveTab] = useState<'edit' | 'preview' | 'ai' | 'citations'>('edit');
+  const [activeTab, setActiveTab] = useState<'edit' | 'preview' | 'ai'>('edit');
   const [noteContent, setNoteContent] = useState('');
   const [isSaved, setIsSaved] = useState(true);
-  const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
+
 
   // AI assistant states
   const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
@@ -85,35 +85,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) =>
     );
   }
 
-  // Citation Formats Generator
-  const getCitations = () => {
-    const authors = paper.authors || 'Unknown Author';
-    const title = paper.title || 'Untitled Document';
-    const journal = paper.journal || 'Research Portal';
-    const year = paper.year || new Date().getFullYear().toString();
 
-    // Format authors list for APA
-    const authorList = authors.split(',').map((a: string) => a.trim());
-    let apaAuthors = authors;
-    if (authorList.length > 0) {
-      apaAuthors = authorList.join(', ');
-    }
-
-    const citationKey = (authorList[0] ? authorList[0].split(' ').pop() || 'key' : 'paper') + year;
-
-    return {
-      apa: `${apaAuthors} (${year}). ${title}. *${journal}*.`,
-      mla: `${apaAuthors}. "${title}." *${journal}*, ${year}.`,
-      chicago: `${apaAuthors}. "${title}." *${journal}* (${year}).`,
-      bibtex: `@article{${citationKey.toLowerCase()},\n  author = {${authors}},\n  title = {${title}},\n  journal = {${journal}},\n  year = {${year}}\n}`,
-    };
-  };
-
-  const handleCopyCitation = (text: string, format: string) => {
-    navigator.clipboard.writeText(text.replace(/\*/g, '')); // remove asterisks for plain text copy
-    setCopiedFormat(format);
-    setTimeout(() => setCopiedFormat(null), 2000);
-  };
 
   const handleInsertCitation = (text: string) => {
     const textarea = textareaRef.current;
@@ -240,7 +212,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) =>
     setAiLoading(false);
   };
 
-  const citations = getCitations();
+
 
   return (
     <aside className="panel right-panel">
@@ -269,14 +241,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) =>
         >
           <Sparkles size={14} />
           <span>AI Insight</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('citations')}
-          className={`tab-btn ${activeTab === 'citations' ? 'active' : ''}`}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-        >
-          <Quote size={14} />
-          <span>Citations</span>
         </button>
       </div>
 
@@ -423,79 +387,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) =>
           </div>
         )}
 
-        {activeTab === 'citations' && (
-          <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflowY: 'auto' }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-              Academic Citation Styles
-            </h3>
 
-            {/* APA */}
-            <div>
-              <div className="citation-header">
-                <span>APA Style</span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button onClick={() => handleCopyCitation(citations.apa, 'apa')} className="tool-btn" style={{ padding: '2px' }} title="Copy">
-                    {copiedFormat === 'apa' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
-                  </button>
-                  <button onClick={() => handleInsertCitation(citations.apa)} className="tool-btn" style={{ padding: '2px' }} title="Insert into note">
-                    <Plus size={14} />
-                  </button>
-                </div>
-              </div>
-              <div className="citation-box" dangerouslySetInnerHTML={{ __html: citations.apa }} />
-            </div>
-
-            {/* MLA */}
-            <div>
-              <div className="citation-header">
-                <span>MLA Style</span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button onClick={() => handleCopyCitation(citations.mla, 'mla')} className="tool-btn" style={{ padding: '2px' }} title="Copy">
-                    {copiedFormat === 'mla' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
-                  </button>
-                  <button onClick={() => handleInsertCitation(citations.mla)} className="tool-btn" style={{ padding: '2px' }} title="Insert into note">
-                    <Plus size={14} />
-                  </button>
-                </div>
-              </div>
-              <div className="citation-box" dangerouslySetInnerHTML={{ __html: citations.mla }} />
-            </div>
-
-            {/* Chicago */}
-            <div>
-              <div className="citation-header">
-                <span>Chicago Style</span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button onClick={() => handleCopyCitation(citations.chicago, 'chicago')} className="tool-btn" style={{ padding: '2px' }} title="Copy">
-                    {copiedFormat === 'chicago' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
-                  </button>
-                  <button onClick={() => handleInsertCitation(citations.chicago)} className="tool-btn" style={{ padding: '2px' }} title="Insert into note">
-                    <Plus size={14} />
-                  </button>
-                </div>
-              </div>
-              <div className="citation-box" dangerouslySetInnerHTML={{ __html: citations.chicago }} />
-            </div>
-
-            {/* BibTeX */}
-            <div>
-              <div className="citation-header">
-                <span>BibTeX Format</span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button onClick={() => handleCopyCitation(citations.bibtex, 'bibtex')} className="tool-btn" style={{ padding: '2px' }} title="Copy">
-                    {copiedFormat === 'bibtex' ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Clipboard size={14} />}
-                  </button>
-                  <button onClick={() => handleInsertCitation(`\n\`\`\`bibtex\n${citations.bibtex}\n\`\`\`\n`)} className="tool-btn" style={{ padding: '2px' }} title="Insert into note">
-                    <Plus size={14} />
-                  </button>
-                </div>
-              </div>
-              <pre className="citation-box" style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
-                {citations.bibtex}
-              </pre>
-            </div>
-          </div>
-        )}
       </div>
     </aside>
   );
