@@ -4,7 +4,7 @@ import type { Project, Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2, Edit3 } from 'lucide-react';
 import { parsePdfTitle } from '../pdfParser';
-import { isSyncConfigured, uploadSinglePaperToGitHub, uploadMetadataToGitHub } from '../github';
+import { isSyncConfigured, uploadSinglePaperToGitHub, uploadMetadataToGitHub, getSyncStatus, setSyncInProgress } from '../github';
 
 interface SidebarProps {
   currentProjectId: string;
@@ -122,88 +122,102 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const newPapersMetadata: Omit<Paper, 'fileData'>[] = [];
     const papersToSaveLocally: Paper[] = [];
     const now = Date.now();
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.type !== 'application/pdf') continue;
 
-      try {
-        const paperId = `paper-${Date.now()}-${i}`;
-        const detectedTitle = await parsePdfTitle(file, file.name);
-
-        const paperObj = {
-          id: paperId,
-          projectId: currentProjectId,
-          title: detectedTitle,
-          authors: '',
-          journal: '',
-          year: new Date().getFullYear().toString(),
-          tags: [],
-          fileData: file, // Save raw file object directly
-          fileName: file.name,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        if (isSyncConfigured() && userEmail) {
-          setUploadProgress(`Uploading ${i + 1}/${files.length}: ${detectedTitle.slice(0, 30)}...`);
-          setUploadPercent(0);
-          // Pass skipMetadataUpdate = true to skip single-file metadata commits
-          await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg, percent) => {
-            setUploadProgress(`[${i + 1}/${files.length}] ${msg}`);
-            if (percent !== undefined) setUploadPercent(percent);
-          }, true);
-        }
-
-        const { fileData, ...meta } = paperObj;
-        newPapersMetadata.push(meta);
-        papersToSaveLocally.push(paperObj);
-        importedCount++;
-      } catch (err: any) {
-        console.error('Error batch importing file:', file.name, err);
-        alert(`Failed to upload ${file.name} to GitHub: ${err.message || err}. Skipping.`);
+    if (isSyncConfigured() && userEmail) {
+      // Wait for any active sync to complete before starting manual batch upload
+      while (getSyncStatus()) {
+        console.log('Waiting for active GitHub sync to complete...');
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
+      setSyncInProgress(true);
     }
 
-    if (importedCount > 0) {
-      if (isSyncConfigured() && userEmail) {
-        setUploadProgress('Uploading combined metadata to GitHub...');
-        setUploadPercent(null);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type !== 'application/pdf') continue;
+
         try {
-          // Upload updated metadata lists ONCE in bulk
-          await uploadMetadataToGitHub(userEmail, currentProjectId, newPapersMetadata, now, (msg, percent) => {
-            setUploadProgress(msg);
-            if (percent !== undefined) setUploadPercent(percent);
-          });
+          const paperId = `paper-${Date.now()}-${i}`;
+          const detectedTitle = await parsePdfTitle(file, file.name);
+
+          const paperObj = {
+            id: paperId,
+            projectId: currentProjectId,
+            title: detectedTitle,
+            authors: '',
+            journal: '',
+            year: new Date().getFullYear().toString(),
+            tags: [],
+            fileData: file, // Save raw file object directly
+            fileName: file.name,
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          if (isSyncConfigured() && userEmail) {
+            setUploadProgress(`Uploading ${i + 1}/${files.length}: ${detectedTitle.slice(0, 30)}...`);
+            setUploadPercent(0);
+            // Pass skipMetadataUpdate = true to skip single-file metadata commits
+            await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg, percent) => {
+              setUploadProgress(`[${i + 1}/${files.length}] ${msg}`);
+              if (percent !== undefined) setUploadPercent(percent);
+            }, true);
+          }
+
+          const { fileData, ...meta } = paperObj;
+          newPapersMetadata.push(meta);
+          papersToSaveLocally.push(paperObj);
+          importedCount++;
         } catch (err: any) {
-          console.error(err);
-          alert(`Failed to upload metadata to GitHub: ${err.message || err}. Local files were not saved.`);
-          setUploadProgress(null);
-          setUploadPercent(null);
-          return;
+          console.error('Error batch importing file:', file.name, err);
+          alert(`Failed to upload ${file.name} to GitHub: ${err.message || err}. Skipping.`);
         }
       }
 
-      // Save all papers and notes locally
-      for (const paperObj of papersToSaveLocally) {
-        await db.papers.add(paperObj);
-        await db.notes.add({
-          id: paperObj.id,
-          paperId: paperObj.id,
-          projectId: currentProjectId,
-          content: '',
-          createdAt: now,
-          updatedAt: now,
-        });
+      if (importedCount > 0) {
+        if (isSyncConfigured() && userEmail) {
+          setUploadProgress('Uploading combined metadata to GitHub...');
+          setUploadPercent(null);
+          try {
+            // Upload updated metadata lists ONCE in bulk
+            await uploadMetadataToGitHub(userEmail, currentProjectId, newPapersMetadata, now, (msg, percent) => {
+              setUploadProgress(msg);
+              if (percent !== undefined) setUploadPercent(percent);
+            });
+          } catch (err: any) {
+            console.error(err);
+            alert(`Failed to upload metadata to GitHub: ${err.message || err}. Local files were not saved.`);
+            setUploadProgress(null);
+            setUploadPercent(null);
+            return;
+          }
+        }
+
+        // Save all papers and notes locally
+        for (const paperObj of papersToSaveLocally) {
+          await db.papers.add(paperObj);
+          await db.notes.add({
+            id: paperObj.id,
+            paperId: paperObj.id,
+            projectId: currentProjectId,
+            content: '',
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+
+        // Update project timestamp
+        await db.projects.update(currentProjectId, { updatedAt: now });
+        alert(`Successfully imported ${importedCount} papers!`);
       }
-
-      // Update project timestamp
-      await db.projects.update(currentProjectId, { updatedAt: now });
-      alert(`Successfully imported ${importedCount} papers!`);
+    } finally {
+      if (isSyncConfigured() && userEmail) {
+        setSyncInProgress(false);
+      }
+      setUploadProgress(null);
+      setUploadPercent(null);
     }
-
-    setUploadProgress(null);
-    setUploadPercent(null);
   };
 
   const handleSavePaper = async (e: React.FormEvent) => {
@@ -231,6 +245,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
 
     if (isSyncConfigured() && userEmail) {
+      // Wait for any active sync to complete before starting upload
+      while (getSyncStatus()) {
+        console.log('Waiting for active GitHub sync to complete...');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      setSyncInProgress(true);
+
       setUploadProgress('Uploading paper to GitHub...');
       setUploadPercent(0);
       try {
@@ -243,7 +264,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         alert(`Upload to GitHub failed: ${err.message || err}. Paper was not saved.`);
         setUploadProgress(null);
         setUploadPercent(null);
+        setSyncInProgress(false);
         return;
+      } finally {
+        setSyncInProgress(false);
       }
       setUploadProgress(null);
       setUploadPercent(null);

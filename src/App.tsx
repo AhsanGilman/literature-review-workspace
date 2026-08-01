@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { PDFReader } from './components/PDFReader';
 import { NoteEditor } from './components/NoteEditor';
 import { SettingsModal } from './components/SettingsModal';
 import { Login } from './components/Login';
-import { syncToGitHub, syncFromGitHub } from './github';
+import { syncToGitHub, syncFromGitHub, getSyncStatus } from './github';
 import { db } from './db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -153,17 +153,12 @@ export const App: React.FC = () => {
     return Math.max(maxProj, maxPapers, maxNotes);
   });
 
-  const isSyncingRef = useRef(false);
-
   const silentSyncToGitHub = async (email: string) => {
-    if (isSyncingRef.current) return;
-    isSyncingRef.current = true;
+    if (getSyncStatus()) return;
     try {
       await syncToGitHub(email);
     } catch (e) {
       console.warn('Background sync failed:', e);
-    } finally {
-      isSyncingRef.current = false;
     }
   };
 

@@ -9,6 +9,17 @@ export function isSyncConfigured(): boolean {
   return !!DEFAULT_TOKEN && !!DEFAULT_REPO;
 }
 
+let isSyncInProgress = false;
+
+export function getSyncStatus(): boolean {
+  return isSyncInProgress;
+}
+
+export function setSyncInProgress(status: boolean): void {
+  isSyncInProgress = status;
+}
+
+
 interface GitHubFile {
   path: string;
   sha: string;
@@ -245,84 +256,91 @@ export async function syncToGitHub(
     return;
   }
 
-  onProgress?.('Initializing sync to GitHub...');
-  const branch = await ensureRepoExists(token, repo);
-  onProgress?.(`Found repository branch: ${branch}`);
-
-  const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
-
-  // Fetch all local data
-  const localProjects = await db.projects.toArray();
-  const localPapers = await db.papers.toArray();
-  const localNotes = await db.notes.toArray();
-
-  // Get current GitHub files and their SHAs
-  onProgress?.('Fetching remote repository tree...');
-  const remoteTree = await getRepoTree(token, repo, branch);
-
-  // Helper to convert UTF-8 string to Base64 (safely handling Unicode)
-  const toBase64 = (str: string) => {
-    const bytes = new TextEncoder().encode(str);
-    let binString = '';
-    bytes.forEach((b) => {
-      binString += String.fromCharCode(b);
-    });
-    return btoa(binString);
-  };
-
-  // 1. Sync metadata: projects.json and papers_metadata.json (without PDF base64 contents)
-  onProgress?.('Uploading project and paper metadata...');
-  const projectsData = JSON.stringify(localProjects, null, 2);
-  const papersMetadata = localPapers.map(({ fileData, ...meta }) => meta);
-  const papersMetadataData = JSON.stringify(papersMetadata, null, 2);
-
-  await uploadFileToGitHub(
-    token,
-    repo,
-    `${prefix}projects.json`,
-    toBase64(projectsData),
-    'Sync projects metadata',
-    remoteTree[`${prefix}projects.json`]?.sha
-  );
-
-  await uploadFileToGitHub(
-    token,
-    repo,
-    `${prefix}papers_metadata.json`,
-    toBase64(papersMetadataData),
-    'Sync papers metadata',
-    remoteTree[`${prefix}papers_metadata.json`]?.sha
-  );
-
-  // 2. Sync papers PDFs
-  for (const paper of localPapers) {
-    const pdfPath = `${prefix}papers/${paper.id}.pdf`;
-    const remoteFile = remoteTree[pdfPath];
-
-    // If PDF does not exist in repo, upload it.
-    if (!remoteFile) {
-      onProgress?.(`Uploading PDF: ${paper.title.slice(0, 30)}...`);
-      const base64Content = await blobToBase64(paper.fileData);
-
-      await uploadFileToGitHub(
-        token,
-        repo,
-        pdfPath,
-        base64Content,
-        `Upload PDF for paper: ${paper.title.slice(0, 50)}`
-      );
-    }
+  if (isSyncInProgress) {
+    console.log('Sync already in progress, skipping background sync to GitHub.');
+    return;
   }
+  isSyncInProgress = true;
 
-  // 3. Sync notes as separate Markdown files
-  for (const note of localNotes) {
-    const paper = localPapers.find((p) => p.id === note.paperId);
-    const paperTitle = paper ? paper.title : note.paperId;
-    const notePath = `${prefix}notes/${note.paperId}.md`;
-    const remoteFile = remoteTree[notePath];
+  try {
+    onProgress?.('Initializing sync to GitHub...');
+    const branch = await ensureRepoExists(token, repo);
+    onProgress?.(`Found repository branch: ${branch}`);
 
-    // Write markdown content with yaml header for readability
-    const mdContent = `---
+    const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
+
+    // Fetch all local data
+    const localProjects = await db.projects.toArray();
+    const localPapers = await db.papers.toArray();
+    const localNotes = await db.notes.toArray();
+
+    // Get current GitHub files and their SHAs
+    onProgress?.('Fetching remote repository tree...');
+    const remoteTree = await getRepoTree(token, repo, branch);
+
+    // Helper to convert UTF-8 string to Base64 (safely handling Unicode)
+    const toBase64 = (str: string) => {
+      const bytes = new TextEncoder().encode(str);
+      let binString = '';
+      bytes.forEach((b) => {
+        binString += String.fromCharCode(b);
+      });
+      return btoa(binString);
+    };
+
+    // 1. Sync metadata: projects.json and papers_metadata.json (without PDF base64 contents)
+    onProgress?.('Uploading project and paper metadata...');
+    const projectsData = JSON.stringify(localProjects, null, 2);
+    const papersMetadata = localPapers.map(({ fileData, ...meta }) => meta);
+    const papersMetadataData = JSON.stringify(papersMetadata, null, 2);
+
+    await uploadFileToGitHub(
+      token,
+      repo,
+      `${prefix}projects.json`,
+      toBase64(projectsData),
+      'Sync projects metadata',
+      remoteTree[`${prefix}projects.json`]?.sha
+    );
+
+    await uploadFileToGitHub(
+      token,
+      repo,
+      `${prefix}papers_metadata.json`,
+      toBase64(papersMetadataData),
+      'Sync papers metadata',
+      remoteTree[`${prefix}papers_metadata.json`]?.sha
+    );
+
+    // 2. Sync papers PDFs
+    for (const paper of localPapers) {
+      const pdfPath = `${prefix}papers/${paper.id}.pdf`;
+      const remoteFile = remoteTree[pdfPath];
+
+      // If PDF does not exist in repo, upload it.
+      if (!remoteFile) {
+        onProgress?.(`Uploading PDF: ${paper.title.slice(0, 30)}...`);
+        const base64Content = await blobToBase64(paper.fileData);
+
+        await uploadFileToGitHub(
+          token,
+          repo,
+          pdfPath,
+          base64Content,
+          `Upload PDF for paper: ${paper.title.slice(0, 50)}`
+        );
+      }
+    }
+
+    // 3. Sync notes as separate Markdown files
+    for (const note of localNotes) {
+      const paper = localPapers.find((p) => p.id === note.paperId);
+      const paperTitle = paper ? paper.title : note.paperId;
+      const notePath = `${prefix}notes/${note.paperId}.md`;
+      const remoteFile = remoteTree[notePath];
+
+      // Write markdown content with yaml header for readability
+      const mdContent = `---
 title: "${paperTitle.replace(/"/g, '\\"')}"
 paperId: "${note.paperId}"
 projectId: "${note.projectId}"
@@ -331,21 +349,24 @@ updatedAt: ${note.updatedAt}
 
 ${note.content}`;
 
-    const localBase64 = toBase64(mdContent);
+      const localBase64 = toBase64(mdContent);
 
-    // Fetch the remote file first to compare or check if upload is needed.
-    onProgress?.(`Syncing note: ${paperTitle.slice(0, 30)}...`);
-    await uploadFileToGitHub(
-      token,
-      repo,
-      notePath,
-      localBase64,
-      `Update note for paper: ${paperTitle.slice(0, 50)}`,
-      remoteFile?.sha
-    );
+      // Fetch the remote file first to compare or check if upload is needed.
+      onProgress?.(`Syncing note: ${paperTitle.slice(0, 30)}...`);
+      await uploadFileToGitHub(
+        token,
+        repo,
+        notePath,
+        localBase64,
+        `Update note for paper: ${paperTitle.slice(0, 50)}`,
+        remoteFile?.sha
+      );
+    }
+
+    onProgress?.('Sync to GitHub completed successfully!');
+  } finally {
+    isSyncInProgress = false;
   }
-
-  onProgress?.('Sync to GitHub completed successfully!');
 }
 
 export async function syncFromGitHub(
@@ -359,138 +380,148 @@ export async function syncFromGitHub(
     return;
   }
 
-  onProgress?.('Initializing sync from GitHub...');
-  const branch = await ensureRepoExists(token, repo);
-
-  onProgress?.('Fetching remote repository tree...');
-  const remoteTree = await getRepoTree(token, repo, branch);
-
-  const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
-
-  const headers = {
-    Authorization: `token ${token}`,
-    Accept: 'application/vnd.github.v3+json',
-  };
-
-  // Helper to fetch file content and decode from base64
-  const fetchFileTextContent = async (path: string): Promise<string> => {
-    const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, { headers });
-    if (!res.ok) throw new Error(`Failed to fetch file: ${path}`);
-    const data = await res.json();
-    // Decode base64 utf-8
-    const binString = atob(data.content.replace(/\s/g, ''));
-    const bytes = Uint8Array.from(binString, (m) => m.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  };
-
-  // Helper to fetch raw base64 content (for PDFs)
-  const fetchFileBase64Content = async (path: string): Promise<string> => {
-    const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, { headers });
-    if (!res.ok) throw new Error(`Failed to fetch file: ${path}`);
-    const data = await res.json();
-    return data.content.replace(/\s/g, ''); // return clean base64 string
-  };
-
-  // 1. Pull projects
-  const projectsPath = `${prefix}projects.json`;
-  if (remoteTree[projectsPath]) {
-    onProgress?.('Syncing projects metadata...');
-    const projectsText = await fetchFileTextContent(projectsPath);
-    const projects: Project[] = JSON.parse(projectsText);
-    for (const project of projects) {
-      const existing = await db.projects.get(project.id);
-      if (!existing || existing.updatedAt < project.updatedAt) {
-        await db.projects.put(project);
-      }
-    }
+  if (isSyncInProgress) {
+    console.log('Sync already in progress, skipping background sync from GitHub.');
+    return;
   }
+  isSyncInProgress = true;
 
-  // 2. Pull papers metadata and PDFs
-  const papersMetaPath = `${prefix}papers_metadata.json`;
-  if (remoteTree[papersMetaPath]) {
-    onProgress?.('Syncing papers metadata...');
-    const papersMetaText = await fetchFileTextContent(papersMetaPath);
-    const remotePapersMeta: Omit<Paper, 'fileData'>[] = JSON.parse(papersMetaText);
+  try {
+    onProgress?.('Initializing sync from GitHub...');
+    const branch = await ensureRepoExists(token, repo);
 
-    for (const paperMeta of remotePapersMeta) {
-      const pdfPath = `${prefix}papers/${paperMeta.id}.pdf`;
-      const existingPaper = await db.papers.get(paperMeta.id);
+    onProgress?.('Fetching remote repository tree...');
+    const remoteTree = await getRepoTree(token, repo, branch);
 
-      // Check if we need to insert or update the paper
-      if (!existingPaper || existingPaper.updatedAt < paperMeta.updatedAt) {
-        onProgress?.(`Fetching PDF for: ${paperMeta.title.slice(0, 30)}...`);
-        let fileBlob = new Blob([], { type: 'application/pdf' });
-        if (remoteTree[pdfPath]) {
-          const base64 = await fetchFileBase64Content(pdfPath);
-          fileBlob = base64ToBlob(base64);
+    const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
+
+    const headers = {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+    };
+
+    // Helper to fetch file content and decode from base64
+    const fetchFileTextContent = async (path: string): Promise<string> => {
+      const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, { headers });
+      if (!res.ok) throw new Error(`Failed to fetch file: ${path}`);
+      const data = await res.json();
+      // Decode base64 utf-8
+      const binString = atob(data.content.replace(/\s/g, ''));
+      const bytes = Uint8Array.from(binString, (m) => m.charCodeAt(0));
+      return new TextDecoder().decode(bytes);
+    };
+
+    // Helper to fetch raw base64 content (for PDFs)
+    const fetchFileBase64Content = async (path: string): Promise<string> => {
+      const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, { headers });
+      if (!res.ok) throw new Error(`Failed to fetch file: ${path}`);
+      const data = await res.json();
+      return data.content.replace(/\s/g, ''); // return clean base64 string
+    };
+
+    // 1. Pull projects
+    const projectsPath = `${prefix}projects.json`;
+    if (remoteTree[projectsPath]) {
+      onProgress?.('Syncing projects metadata...');
+      const projectsText = await fetchFileTextContent(projectsPath);
+      const projects: Project[] = JSON.parse(projectsText);
+      for (const project of projects) {
+        const existing = await db.projects.get(project.id);
+        if (!existing || existing.updatedAt < project.updatedAt) {
+          await db.projects.put(project);
         }
-
-        const fullPaper: Paper = {
-          ...paperMeta,
-          fileData: fileBlob,
-        };
-        await db.papers.put(fullPaper);
       }
     }
-  }
 
-  // 3. Pull notes
-  onProgress?.('Syncing notes...');
-  const notePaths = Object.keys(remoteTree).filter((path) => path.startsWith(`${prefix}notes/`) && path.endsWith('.md'));
-  
-  for (const path of notePaths) {
-    const paperId = path.replace(`${prefix}notes/`, '').replace('.md', '');
-    try {
-      const mdContent = await fetchFileTextContent(path);
-      
-      // Parse yaml header and markdown
-      const lines = mdContent.split('\n');
-      let content = mdContent;
-      let projectId = 'default-project';
-      let updatedAt = Date.now();
+    // 2. Pull papers metadata and PDFs
+    const papersMetaPath = `${prefix}papers_metadata.json`;
+    if (remoteTree[papersMetaPath]) {
+      onProgress?.('Syncing papers metadata...');
+      const papersMetaText = await fetchFileTextContent(papersMetaPath);
+      const remotePapersMeta: Omit<Paper, 'fileData'>[] = JSON.parse(papersMetaText);
 
-      if (mdContent.startsWith('---')) {
-        let yamlEndIndex = -1;
-        for (let i = 1; i < lines.length; i++) {
-          if (lines[i].trim() === '---') {
-            yamlEndIndex = i;
-            break;
+      for (const paperMeta of remotePapersMeta) {
+        const pdfPath = `${prefix}papers/${paperMeta.id}.pdf`;
+        const existingPaper = await db.papers.get(paperMeta.id);
+
+        // Check if we need to insert or update the paper
+        if (!existingPaper || existingPaper.updatedAt < paperMeta.updatedAt) {
+          onProgress?.(`Fetching PDF for: ${paperMeta.title.slice(0, 30)}...`);
+          let fileBlob = new Blob([], { type: 'application/pdf' });
+          if (remoteTree[pdfPath]) {
+            const base64 = await fetchFileBase64Content(pdfPath);
+            fileBlob = base64ToBlob(base64);
           }
-        }
 
-        if (yamlEndIndex !== -1) {
-          const yamlLines = lines.slice(1, yamlEndIndex);
-          content = lines.slice(yamlEndIndex + 1).join('\n').trim();
-          
-          for (const line of yamlLines) {
-            const separator = line.indexOf(':');
-            if (separator !== -1) {
-              const key = line.slice(0, separator).trim();
-              const value = line.slice(separator + 1).trim().replace(/"/g, '');
-              if (key === 'projectId') projectId = value;
-              if (key === 'updatedAt') updatedAt = parseInt(value, 10) || Date.now();
+          const fullPaper: Paper = {
+            ...paperMeta,
+            fileData: fileBlob,
+          };
+          await db.papers.put(fullPaper);
+        }
+      }
+    }
+
+    // 3. Pull notes
+    onProgress?.('Syncing notes...');
+    const notePaths = Object.keys(remoteTree).filter((path) => path.startsWith(`${prefix}notes/`) && path.endsWith('.md'));
+    
+    for (const path of notePaths) {
+      const paperId = path.replace(`${prefix}notes/`, '').replace('.md', '');
+      try {
+        const mdContent = await fetchFileTextContent(path);
+        
+        // Parse yaml header and markdown
+        const lines = mdContent.split('\n');
+        let content = mdContent;
+        let projectId = 'default-project';
+        let updatedAt = Date.now();
+
+        if (mdContent.startsWith('---')) {
+          let yamlEndIndex = -1;
+          for (let i = 1; i < lines.length; i++) {
+            if (lines[i].trim() === '---') {
+              yamlEndIndex = i;
+              break;
+            }
+          }
+
+          if (yamlEndIndex !== -1) {
+            const yamlLines = lines.slice(1, yamlEndIndex);
+            content = lines.slice(yamlEndIndex + 1).join('\n').trim();
+            
+            for (const line of yamlLines) {
+              const separator = line.indexOf(':');
+              if (separator !== -1) {
+                const key = line.slice(0, separator).trim();
+                const value = line.slice(separator + 1).trim().replace(/"/g, '');
+                if (key === 'projectId') projectId = value;
+                if (key === 'updatedAt') updatedAt = parseInt(value, 10) || Date.now();
+              }
             }
           }
         }
-      }
 
-      const existingNote = await db.notes.get(paperId); // note id is paperId (1-to-1)
-      if (!existingNote || existingNote.updatedAt < updatedAt) {
-        await db.notes.put({
-          id: paperId,
-          paperId,
-          projectId,
-          content,
-          createdAt: existingNote?.createdAt || Date.now(),
-          updatedAt,
-        });
+        const existingNote = await db.notes.get(paperId); // note id is paperId (1-to-1)
+        if (!existingNote || existingNote.updatedAt < updatedAt) {
+          await db.notes.put({
+            id: paperId,
+            paperId,
+            projectId,
+            content,
+            createdAt: existingNote?.createdAt || Date.now(),
+            updatedAt,
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to sync note ${path}:`, err);
       }
-    } catch (err) {
-      console.error(`Failed to sync note ${path}:`, err);
     }
-  }
 
-  onProgress?.('Sync from GitHub completed successfully!');
+    onProgress?.('Sync from GitHub completed successfully!');
+  } finally {
+    isSyncInProgress = false;
+  }
 }
 
 export async function uploadSinglePaperToGitHub(
