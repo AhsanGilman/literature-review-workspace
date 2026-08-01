@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, type Paper, type Note } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { marked } from 'marked';
 import { 
-  FileText, Eye, Edit3, Sparkles, 
+  FileText, Edit3, Sparkles, 
   Bold, Italic, Heading1, Heading2, List, Code, Save, BrainCircuit, Plus
 } from 'lucide-react';
 
@@ -13,7 +12,7 @@ interface NoteEditorProps {
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) => {
-  const [activeTab, setActiveTab] = useState<'edit' | 'preview' | 'ai'>('edit');
+  const [activeTab, setActiveTab] = useState<'edit' | 'ai'>('edit');
   const [noteContent, setNoteContent] = useState('');
   const [isSaved, setIsSaved] = useState(true);
 
@@ -128,15 +127,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) =>
     }, 50);
   };
 
-  // Render markdown preview securely
-  const renderPreview = () => {
-    try {
-      const html = marked.parse(noteContent, { async: false }) as string;
-      return { __html: html };
-    } catch (e) {
-      return { __html: '<p>Error rendering preview.</p>' };
-    }
-  };
+
 
   // Save Gemini Key
   const handleSaveGeminiKey = (key: string) => {
@@ -227,14 +218,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) =>
           <span>Edit Notes</span>
         </button>
         <button
-          onClick={() => setActiveTab('preview')}
-          className={`tab-btn ${activeTab === 'preview' ? 'active' : ''}`}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-        >
-          <Eye size={14} />
-          <span>Preview</span>
-        </button>
-        <button
           onClick={() => setActiveTab('ai')}
           className={`tab-btn ${activeTab === 'ai' ? 'active' : ''}`}
           style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
@@ -272,10 +255,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({ paperId, projectId }) =>
               placeholder="Start typing your research paper notes in Markdown..."
             />
           </>
-        )}
-
-        {activeTab === 'preview' && (
-          <div className="markdown-preview" dangerouslySetInnerHTML={renderPreview()} />
         )}
 
         {activeTab === 'ai' && (
