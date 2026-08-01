@@ -85,7 +85,7 @@ export const PDFReader: React.FC<PDFReaderProps> = ({ paperId }) => {
               whiteSpace: 'nowrap',
             }}
           >
-            {paper ? (paper.fileName || paper.title) : 'Loading paper...'}
+            {paper ? paper.title : 'Loading paper...'}
           </h3>
         </div>
       </div>
