@@ -165,18 +165,13 @@ async function uploadFileToGitHub(
   path: string,
   contentBase64: string,
   message: string,
-  sha?: string
+  sha?: string,
+  onProgress?: (percent: number) => void
 ): Promise<string> {
-  const headers = {
-    Authorization: `token ${token}`,
-    Accept: 'application/vnd.github.v3+json',
-    'Content-Type': 'application/json',
-  };
-
   let currentSha = sha;
   if (!currentSha) {
     try {
-      const getRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+      const getRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}?t=${Date.now()}`, {
         headers: {
           Authorization: `token ${token}`,
           Accept: 'application/vnd.github.v3+json',
@@ -191,25 +186,52 @@ async function uploadFileToGitHub(
     }
   }
 
-  const body = {
-    message,
-    content: contentBase64,
-    sha: currentSha,
-  };
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `https://api.github.com/repos/${repo}/contents/${path}`, true);
+    xhr.setRequestHeader('Authorization', `token ${token}`);
+    xhr.setRequestHeader('Accept', 'application/vnd.github.v3+json');
+    xhr.setRequestHeader('Content-Type', 'application/json');
 
-  const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify(body),
+    if (onProgress && xhr.upload) {
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100);
+          onProgress(percentComplete);
+        }
+      });
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve(data.content.sha);
+        } catch (e) {
+          reject(new Error('Failed to parse response from GitHub'));
+        }
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText);
+          reject(new Error(`Failed to upload file ${path}: ${err.message}`));
+        } catch (e) {
+          reject(new Error(`Failed to upload file ${path}: HTTP ${xhr.status}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error(`Network error uploading file ${path}`));
+    };
+
+    const body = {
+      message,
+      content: contentBase64,
+      sha: currentSha,
+    };
+
+    xhr.send(JSON.stringify(body));
   });
-
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(`Failed to upload file ${path}: ${err.message}`);
-  }
-
-  const data = await res.json();
-  return data.content.sha;
 }
 
 export async function syncToGitHub(
@@ -486,7 +508,7 @@ export async function uploadSinglePaperToGitHub(
     createdAt: number;
     updatedAt: number;
   },
-  onProgress?: (msg: string) => void,
+  onProgress?: (msg: string, percent?: number) => void,
   skipMetadataUpdate = false
 ): Promise<void> {
   const token = DEFAULT_TOKEN;
@@ -495,7 +517,7 @@ export async function uploadSinglePaperToGitHub(
     throw new Error('GitHub Sync is not configured.');
   }
 
-  onProgress?.('Connecting to remote repository...');
+  onProgress?.('Connecting to remote repository...', 0);
   await ensureRepoExists(token, repo);
   const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
 
@@ -510,7 +532,7 @@ export async function uploadSinglePaperToGitHub(
   };
 
   // 1. Upload PDF file
-  onProgress?.('Uploading PDF to GitHub...');
+  onProgress?.('Uploading PDF to GitHub...', 0);
   const pdfPath = `${prefix}papers/${paper.id}.pdf`;
   const base64Content = await blobToBase64(paper.fileData);
   await uploadFileToGitHub(
@@ -518,7 +540,11 @@ export async function uploadSinglePaperToGitHub(
     repo,
     pdfPath,
     base64Content,
-    `Upload PDF for paper: ${paper.title.slice(0, 50)}`
+    `Upload PDF for paper: ${paper.title.slice(0, 50)}`,
+    undefined,
+    (percent) => {
+      onProgress?.('Uploading PDF to GitHub...', percent);
+    }
   );
 
   // 2. Upload initial empty note file
@@ -596,7 +622,7 @@ export async function uploadMetadataToGitHub(
   projectId: string,
   newPapers: Omit<Paper, 'fileData'>[],
   updatedAt: number,
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string, percent?: number) => void
 ): Promise<void> {
   const token = DEFAULT_TOKEN;
   const repo = DEFAULT_REPO;

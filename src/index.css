@@ -322,6 +322,29 @@ input, button, textarea, select {
   word-break: break-word;
 }
 
+.upload-progress-container {
+  width: 100%;
+  background-color: var(--border-color);
+  border-radius: var(--radius-sm);
+  height: 8px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.upload-progress-bar {
+  background-color: var(--accent-primary);
+  height: 100%;
+  transition: width 0.1s ease;
+  width: 0%;
+}
+
+.upload-progress-percent {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-top: -4px;
+}
+
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }

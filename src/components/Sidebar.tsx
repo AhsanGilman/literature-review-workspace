@@ -42,6 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Progress overlay for GitHub pre-upload
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -146,9 +147,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         if (isSyncConfigured() && userEmail) {
           setUploadProgress(`Uploading ${i + 1}/${files.length}: ${detectedTitle.slice(0, 30)}...`);
+          setUploadPercent(0);
           // Pass skipMetadataUpdate = true to skip single-file metadata commits
-          await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg) => {
+          await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg, percent) => {
             setUploadProgress(`[${i + 1}/${files.length}] ${msg}`);
+            if (percent !== undefined) setUploadPercent(percent);
           }, true);
         }
 
@@ -165,15 +168,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (importedCount > 0) {
       if (isSyncConfigured() && userEmail) {
         setUploadProgress('Uploading combined metadata to GitHub...');
+        setUploadPercent(null);
         try {
           // Upload updated metadata lists ONCE in bulk
-          await uploadMetadataToGitHub(userEmail, currentProjectId, newPapersMetadata, now, (msg) => {
+          await uploadMetadataToGitHub(userEmail, currentProjectId, newPapersMetadata, now, (msg, percent) => {
             setUploadProgress(msg);
+            if (percent !== undefined) setUploadPercent(percent);
           });
         } catch (err: any) {
           console.error(err);
           alert(`Failed to upload metadata to GitHub: ${err.message || err}. Local files were not saved.`);
           setUploadProgress(null);
+          setUploadPercent(null);
           return;
         }
       }
@@ -197,6 +203,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     setUploadProgress(null);
+    setUploadPercent(null);
   };
 
   const handleSavePaper = async (e: React.FormEvent) => {
@@ -225,17 +232,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     if (isSyncConfigured() && userEmail) {
       setUploadProgress('Uploading paper to GitHub...');
+      setUploadPercent(0);
       try {
-        await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg) => {
+        await uploadSinglePaperToGitHub(userEmail, currentProjectId, paperObj, (msg, percent) => {
           setUploadProgress(msg);
+          if (percent !== undefined) setUploadPercent(percent);
         });
       } catch (err: any) {
         console.error(err);
         alert(`Upload to GitHub failed: ${err.message || err}. Paper was not saved.`);
         setUploadProgress(null);
+        setUploadPercent(null);
         return;
       }
       setUploadProgress(null);
+      setUploadPercent(null);
     }
 
     // Save paper metadata and content to IndexedDB only after successful GitHub upload!
@@ -758,6 +769,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="upload-loader-card">
             <div className="upload-loader-spinner" />
             <div className="upload-loader-text">{uploadProgress}</div>
+            {uploadPercent !== null && (
+              <>
+                <div className="upload-progress-container">
+                  <div 
+                    className="upload-progress-bar" 
+                    style={{ width: `${uploadPercent}%` }} 
+                  />
+                </div>
+                <div className="upload-progress-percent">{uploadPercent}%</div>
+              </>
+            )}
           </div>
         </div>
       )}
