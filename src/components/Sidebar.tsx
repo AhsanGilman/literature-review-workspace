@@ -119,6 +119,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Selection state for papers (for bulk delete)
+  const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
+
   // Load projects from db
   const projects = useLiveQuery(() => db.projects.toArray()) as Project[] || [];
   
@@ -309,6 +312,53 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (selectedPaperId === id) {
         onSelectPaper('');
       }
+      // Remove from selection if deleted
+      const newSelected = new Set(selectedPaperIds);
+      newSelected.delete(id);
+      setSelectedPaperIds(newSelected);
+    }
+  };
+
+  const isAllFilteredSelected = filteredPapers.length > 0 && filteredPapers.every(p => selectedPaperIds.has(p.id));
+  
+  const handleToggleSelectAll = () => {
+    const newSelected = new Set<string>();
+    if (!isAllFilteredSelected) {
+      // Add all current selected and filtered papers
+      selectedPaperIds.forEach(id => newSelected.add(id));
+      filteredPapers.forEach(p => newSelected.add(p.id));
+    } else {
+      // Remove all filtered papers from selection
+      selectedPaperIds.forEach(id => newSelected.add(id));
+      filteredPapers.forEach(p => newSelected.delete(p.id));
+    }
+    setSelectedPaperIds(newSelected);
+  };
+
+  const handleToggleSelectPaper = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newSelected = new Set(selectedPaperIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedPaperIds(newSelected);
+  };
+
+  const handleBulkDelete = async () => {
+    const count = selectedPaperIds.size;
+    if (count === 0) return;
+    if (confirm(`Are you sure you want to delete the ${count} selected paper(s) and their notes?`)) {
+      const idsToDelete = Array.from(selectedPaperIds);
+      await db.papers.bulkDelete(idsToDelete);
+      await db.notes.bulkDelete(idsToDelete);
+      
+      if (idsToDelete.includes(selectedPaperId)) {
+        onSelectPaper('');
+      }
+      setSelectedPaperIds(new Set());
+      await db.projects.update(currentProjectId, { updatedAt: Date.now() });
     }
   };
 
@@ -422,8 +472,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Paper List Content */}
       <div className="panel-content" style={{ padding: '0 16px 16px 16px', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Papers ({filteredPapers.length})</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input 
+              type="checkbox" 
+              checked={isAllFilteredSelected} 
+              onChange={handleToggleSelectAll}
+              style={{ cursor: 'pointer' }}
+              title="Select All"
+            />
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Papers ({filteredPapers.length})</span>
+          </div>
+          {selectedPaperIds.size > 0 && (
+            <button 
+              onClick={handleBulkDelete}
+              className="tool-btn"
+              style={{ color: 'var(--danger)', fontSize: '0.75rem', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-sm)' }}
+            >
+              <Trash2 size={12} />
+              <span>Delete ({selectedPaperIds.size})</span>
+            </button>
+          )}
         </div>
 
         {/* Drag & Drop Upload Zone */}
@@ -457,34 +526,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
               key={paper.id}
               className={`paper-item ${selectedPaperId === paper.id ? 'active' : ''}`}
               onClick={() => onSelectPaper(paper.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: '10px' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                <div className="paper-title">{paper.fileName || paper.title}</div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingPaper(paper);
-                      setPaperTitle(paper.title);
-                      setPaperAuthors(paper.authors);
-                      setPaperJournal(paper.journal);
-                      setPaperYear(paper.year);
-                      setPaperTags(paper.tags.join(', '));
-                    }}
-                    className="tool-btn"
-                    style={{ padding: '2px', color: 'var(--text-muted)' }}
-                    title="Edit Paper Details"
-                  >
-                    <Edit3 size={13} />
-                  </button>
-                  <button
-                    onClick={(e) => handleDeletePaper(paper.id, e)}
-                    className="tool-btn"
-                    style={{ padding: '2px', color: 'var(--text-muted)' }}
-                    title="Delete Paper"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+              <input
+                type="checkbox"
+                checked={selectedPaperIds.has(paper.id)}
+                onChange={() => {}}
+                onClick={(e) => handleToggleSelectPaper(paper.id, e)}
+                style={{ cursor: 'pointer', flexShrink: 0 }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                  <div className="paper-title">{paper.fileName || paper.title}</div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingPaper(paper);
+                        setPaperTitle(paper.title);
+                        setPaperAuthors(paper.authors);
+                        setPaperJournal(paper.journal);
+                        setPaperYear(paper.year);
+                        setPaperTags(paper.tags.join(', '));
+                      }}
+                      className="tool-btn"
+                      style={{ padding: '2px', color: 'var(--text-muted)' }}
+                      title="Edit Paper Details"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                    <button
+                      onClick={(e) => handleDeletePaper(paper.id, e)}
+                      className="tool-btn"
+                      style={{ padding: '2px', color: 'var(--text-muted)' }}
+                      title="Delete Paper"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
