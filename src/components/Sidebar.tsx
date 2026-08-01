@@ -4,6 +4,87 @@ import type { Project, Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, Upload, Tag, FolderPlus, Settings, FileText, Trash2, Edit3 } from 'lucide-react';
 
+// Decodes common HTML entities
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'");
+}
+
+// Parses the actual title of the PDF document from metadata
+async function parsePdfTitle(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      
+      // 1. Try DC XML title (academic metadata block)
+      const xmlMatch = text.match(/<dc:title[^>]*>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/i);
+      if (xmlMatch && xmlMatch[1]) {
+        const clean = xmlMatch[1].trim().replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
+        if (clean && clean.length > 3 && !clean.toLowerCase().includes('untitled')) {
+          resolve(decodeHtmlEntities(clean));
+          return;
+        }
+      }
+
+      // 2. Try PDF Title attribute literal: /Title (Some Title)
+      const literalMatch = text.match(/\/Title\s*\(([^)]+)\)/);
+      if (literalMatch && literalMatch[1]) {
+        const clean = literalMatch[1].trim();
+        if (clean && clean.length > 3 && !clean.toLowerCase().includes('untitled')) {
+          resolve(clean);
+          return;
+        }
+      }
+
+      // 3. Try PDF Title hex format: /Title <FEFF0043...>
+      const hexMatch = text.match(/\/Title\s*<([0-9a-fA-F]+)>/);
+      if (hexMatch && hexMatch[1]) {
+        const hex = hexMatch[1];
+        let title = '';
+        try {
+          if (hex.startsWith('feff') || hex.startsWith('FEFF')) {
+            for (let i = 4; i < hex.length; i += 4) {
+              const code = parseInt(hex.substring(i, i + 4), 16);
+              title += String.fromCharCode(code);
+            }
+          } else {
+            for (let i = 0; i < hex.length; i += 2) {
+              const code = parseInt(hex.substring(i, i + 2), 16);
+              title += String.fromCharCode(code);
+            }
+          }
+          const clean = title.trim();
+          if (clean && clean.length > 3 && !clean.toLowerCase().includes('untitled')) {
+            resolve(clean);
+            return;
+          }
+        } catch (e) {
+          console.error('Error parsing hex title', e);
+        }
+      }
+
+      // Fallback: Filename without extension
+      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+      resolve(nameWithoutExt);
+    };
+
+    reader.onerror = () => {
+      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+      resolve(nameWithoutExt);
+    };
+
+    // Read first 1MB for metadata
+    const slice = file.slice(0, 1024 * 1024);
+    reader.readAsText(slice, 'binary');
+  });
+}
+
 interface SidebarProps {
   currentProjectId: string;
   onSelectProject: (id: string) => void;
@@ -93,12 +174,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     if (file.type !== 'application/pdf') return;
     setPendingFile(file);
-    // Pre-fill fields
-    const titleWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
-    setPaperTitle(titleWithoutExt);
+    // Pre-fill fields: try to detect title automatically from PDF contents
+    const detectedTitle = await parsePdfTitle(file);
+    setPaperTitle(detectedTitle);
     setPaperAuthors('');
     setPaperJournal('');
     setPaperYear(new Date().getFullYear().toString());
@@ -115,13 +196,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       try {
         const paperId = `paper-${Date.now()}-${i}`;
-        const titleWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+        const detectedTitle = await parsePdfTitle(file);
 
         // Save paper metadata and content to IndexedDB
         await db.papers.add({
           id: paperId,
           projectId: currentProjectId,
-          title: titleWithoutExt,
+          title: detectedTitle,
           authors: '',
           journal: '',
           year: new Date().getFullYear().toString(),

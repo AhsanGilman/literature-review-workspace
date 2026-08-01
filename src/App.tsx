@@ -54,6 +54,68 @@ export const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState('');
   const [syncError, setSyncError] = useState('');
 
+  // Panel Width States (persisted)
+  const [leftWidth, setLeftWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('litsy_left_width');
+    return saved ? parseInt(saved, 10) : 280;
+  });
+  const [rightWidth, setRightWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('litsy_right_width');
+    return saved ? parseInt(saved, 10) : 400;
+  });
+
+  const [isResizingLeft, setIsResizingLeft] = useState(false);
+  const [isResizingRight, setIsResizingRight] = useState(false);
+
+  const startResizeLeft = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingLeft(true);
+  };
+
+  const startResizeRight = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingRight(true);
+  };
+
+  useEffect(() => {
+    localStorage.setItem('litsy_left_width', leftWidth.toString());
+  }, [leftWidth]);
+
+  useEffect(() => {
+    localStorage.setItem('litsy_right_width', rightWidth.toString());
+  }, [rightWidth]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizingLeft) {
+        const newWidth = Math.max(200, Math.min(500, e.clientX));
+        setLeftWidth(newWidth);
+      } else if (isResizingRight) {
+        const newWidth = Math.max(250, Math.min(600, window.innerWidth - e.clientX));
+        setRightWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingLeft(false);
+      setIsResizingRight(false);
+    };
+
+    if (isResizingLeft || isResizingRight) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingLeft, isResizingRight]);
+
   // Apply theme to body
   useEffect(() => {
     document.body.setAttribute('data-theme', settings.theme);
@@ -150,7 +212,10 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="dashboard">
+    <div 
+      className="dashboard" 
+      style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr 4px ${rightWidth}px` }}
+    >
       {/* Panel 1: Navigation & Papers (Left) */}
       <Sidebar
         currentProjectId={currentProjectId}
@@ -160,8 +225,20 @@ export const App: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
+      {/* Resize Handle 1 (Left-Middle) */}
+      <div 
+        className={`resize-handle ${isResizingLeft ? 'active' : ''}`} 
+        onMouseDown={startResizeLeft}
+      />
+
       {/* Panel 2: PDF Reader (Middle) */}
       <PDFReader paperId={selectedPaperId} />
+
+      {/* Resize Handle 2 (Middle-Right) */}
+      <div 
+        className={`resize-handle ${isResizingRight ? 'active' : ''}`} 
+        onMouseDown={startResizeRight}
+      />
 
       {/* Panel 3: Notes Workspace (Right) */}
       <NoteEditor paperId={selectedPaperId} projectId={currentProjectId} />

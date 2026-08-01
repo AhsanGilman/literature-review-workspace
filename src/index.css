@@ -733,3 +733,20 @@ input, button, textarea, select {
   font-size: 0.7rem;
   font-weight: 600;
 }
+
+/* Panel Resize Handles */
+.resize-handle {
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  background-color: var(--border-color);
+  transition: all 0.2s ease;
+  z-index: 10;
+  position: relative;
+}
+
+.resize-handle:hover, .resize-handle.active {
+  background-color: var(--accent-primary);
+  box-shadow: 0 0 6px var(--accent-primary);
+  width: 4px;
+}
