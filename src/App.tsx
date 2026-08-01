@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { PDFReader } from './components/PDFReader';
 import { NoteEditor } from './components/NoteEditor';
@@ -6,6 +6,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { Login } from './components/Login';
 import { syncToGitHub, syncFromGitHub } from './github';
 import { db } from './db';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 interface User {
   email: string;
@@ -139,12 +140,54 @@ export const App: React.FC = () => {
     setSelectedPaperId(''); // clear selection on project switch
   }, [currentProjectId]);
 
+  // Max updatedAt reactive query to trigger background sync
+  const lastUpdated = useLiveQuery(async () => {
+    const proj = await db.projects.toArray();
+    const papers = await db.papers.toArray();
+    const notes = await db.notes.toArray();
+    
+    const maxProj = proj.length > 0 ? Math.max(...proj.map(p => p.updatedAt)) : 0;
+    const maxPapers = papers.length > 0 ? Math.max(...papers.map(p => p.updatedAt)) : 0;
+    const maxNotes = notes.length > 0 ? Math.max(...notes.map(n => n.updatedAt)) : 0;
+    
+    return Math.max(maxProj, maxPapers, maxNotes);
+  });
+
+  const isSyncingRef = useRef(false);
+
+  const silentSyncToGitHub = async (email: string) => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+    try {
+      await syncToGitHub(email);
+    } catch (e) {
+      console.warn('Background sync failed:', e);
+    } finally {
+      isSyncingRef.current = false;
+    }
+  };
+
+  // Debounced auto-save to cloud repository
+  useEffect(() => {
+    if (!user || !lastUpdated) return;
+
+    const timer = setTimeout(() => {
+      silentSyncToGitHub(user.email);
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [lastUpdated, user]);
+
+  // Pull data from repository automatically on mount (app load)
+  useEffect(() => {
+    if (user) {
+      handleSyncFromGitHub(user.email);
+    }
+  }, []);
+
   const handleLoginSuccess = (loggedInUser: User) => {
     setUser(loggedInUser);
-    // If they have GitHub credentials already saved in this browser, try to auto-sync
-    if (settings.githubPat && settings.githubRepo) {
-      handleSyncFromGitHub();
-    }
+    handleSyncFromGitHub(loggedInUser.email);
   };
 
   const handleLogout = () => {
@@ -158,36 +201,14 @@ export const App: React.FC = () => {
     setSettings(newSettings);
   };
 
-  const handleSyncToGitHub = async () => {
-    if (!settings.githubPat || !settings.githubRepo) {
-      setSyncError('Please configure GitHub Token and Repository first.');
-      return;
-    }
-    setSyncing(true);
-    setSyncError('');
-    setSyncStatus('Starting upload to GitHub...');
-    try {
-      await syncToGitHub(settings.githubPat, settings.githubRepo, (msg) => {
-        setSyncStatus(msg);
-      });
-    } catch (err: any) {
-      console.error(err);
-      setSyncError(err.message || 'An error occurred during sync.');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
-  const handleSyncFromGitHub = async () => {
-    if (!settings.githubPat || !settings.githubRepo) {
-      setSyncError('Please configure GitHub Token and Repository first.');
-      return;
-    }
+
+  const handleSyncFromGitHub = async (email: string) => {
     setSyncing(true);
     setSyncError('');
     setSyncStatus('Starting download from GitHub...');
     try {
-      await syncFromGitHub(settings.githubPat, settings.githubRepo, (msg) => {
+      await syncFromGitHub(email, (msg) => {
         setSyncStatus(msg);
       });
       // Force database reload / update UI
@@ -249,8 +270,6 @@ export const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSaveSettings={handleSaveSettings}
-        onSyncToGitHub={handleSyncToGitHub}
-        onSyncFromGitHub={handleSyncFromGitHub}
         syncing={syncing}
         syncStatus={syncStatus}
         syncError={syncError}

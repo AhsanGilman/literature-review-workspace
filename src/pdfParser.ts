@@ -19,14 +19,9 @@ export async function parsePdfTitle(file: File | Blob, fileName: string): Promis
   try {
     arrayBuffer = await file.arrayBuffer();
     
-    // Import pdf.js dynamically from CDNjs using a variable path to bypass TS compile-time import checks
-    const pdfjsUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs';
+    const pdfjsUrl = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs';
     const pdfjs: any = await import(/* @vite-ignore */ pdfjsUrl);
-    
-    // Create a local blob worker to avoid cross-origin same-origin worker restrictions
-    const workerCode = `importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');`;
-    const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
-    pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs';
 
     const loadingTask = pdfjs.getDocument({ data: new Uint8Array(arrayBuffer) });
     const pdf = await loadingTask.promise;
@@ -58,31 +53,72 @@ export async function parsePdfTitle(file: File | Blob, fileName: string): Promis
       const minY = Math.min(...items.map((i: TextItem) => i.y));
       const height = maxY - minY;
       
-      // Focus on upper 70% of the page where title resides
+      // Focus on upper 75% of the page where title resides
       const upperPageItems = items.filter((item: TextItem) => item.y > minY + height * 0.25);
       
       if (upperPageItems.length > 0) {
-        const maxFontSize = Math.max(...upperPageItems.map((item: TextItem) => item.fontSize));
-        
-        // Titles are generally much larger than standard text
-        if (maxFontSize >= 12) {
-          const threshold = maxFontSize * 0.85;
-          const titleItems = upperPageItems.filter((item: TextItem) => item.fontSize >= threshold);
+        // Group items by rounded font size (to the nearest integer)
+        const groups: { [key: number]: TextItem[] } = {};
+        upperPageItems.forEach((item) => {
+          const roundedSize = Math.round(item.fontSize);
+          // Only consider font sizes of 12px and above for the title
+          if (roundedSize >= 12) {
+            if (!groups[roundedSize]) {
+              groups[roundedSize] = [];
+            }
+            groups[roundedSize].push(item);
+          }
+        });
 
-          // Sort top-to-bottom, left-to-right
-          titleItems.sort((a: TextItem, b: TextItem) => {
+        let bestTitle = '';
+        let highestScore = -1;
+
+        Object.keys(groups).forEach((sizeStr) => {
+          const size = parseInt(sizeStr, 10);
+          const groupItems = groups[size];
+
+          // Sort items top-to-bottom, left-to-right
+          groupItems.sort((a: TextItem, b: TextItem) => {
             if (Math.abs(a.y - b.y) < 5) {
               return a.x - b.x;
             }
             return b.y - a.y;
           });
 
-          let title = titleItems.map((item: TextItem) => item.str.trim()).join(' ');
-          title = title.replace(/\s+/g, ' ').trim();
+          let text = groupItems.map(item => item.str.trim()).join(' ');
+          text = text.replace(/\s+/g, ' ').trim();
 
-          if (title.length > 10 && title.length < 250) {
-            return title;
+          // Count words
+          const words = text.split(/\s+/).filter(Boolean);
+          const wordCount = words.length;
+
+          // Calculate score: FontSize^2 * Math.min(10, WordCount)
+          // Also penalize strings containing typical banner words
+          const lowerText = text.toLowerCase();
+          let penaltyMultiplier = 1.0;
+          
+          if (
+            lowerText.includes('volume') ||
+            lowerText.includes('issue') ||
+            lowerText.includes('page') ||
+            lowerText.includes('frontiersin.org') ||
+            lowerText.includes('doi:') ||
+            lowerText.includes('published') ||
+            lowerText.includes('received')
+          ) {
+            penaltyMultiplier = 0.1;
           }
+
+          const score = (size * size) * Math.min(10, wordCount) * penaltyMultiplier;
+
+          if (score > highestScore && wordCount >= 3 && text.length >= 10 && text.length < 250) {
+            highestScore = score;
+            bestTitle = text;
+          }
+        });
+
+        if (bestTitle) {
+          return bestTitle;
         }
       }
     }

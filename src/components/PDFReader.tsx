@@ -67,7 +67,11 @@ export const PDFReader: React.FC<PDFReaderProps> = ({ paperId }) => {
       currentTitle === paper.fileName || 
       currentTitle.toLowerCase().endsWith('.pdf') ||
       /^\d+$/.test(currentTitle) ||
-      currentTitle.length <= 4;
+      currentTitle.length <= 15 ||
+      currentTitle.toLowerCase().includes('frontiers') ||
+      currentTitle.toLowerCase().includes('microbiology') ||
+      currentTitle.toLowerCase().includes('journal') ||
+      currentTitle.toLowerCase().includes('untitled');
 
     if (isGeneric) {
       const healTitle = async () => {

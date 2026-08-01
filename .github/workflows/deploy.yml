@@ -38,6 +38,9 @@ jobs:
         
       - name: Build
         run: npm run build
+        env:
+          VITE_GITHUB_PAT: ${{ secrets.CLOUDBACKUP_PAT }}
+          VITE_GITHUB_REPO: ${{ github.repository }}
         
       - name: Setup Pages
         uses: actions/configure-pages@v4

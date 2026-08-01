@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Save, RefreshCw, UploadCloud, DownloadCloud, LogOut, Sun, Moon } from 'lucide-react';
+import { X, Save, RefreshCw, LogOut, Sun, Moon } from 'lucide-react';
 
 interface Settings {
   googleClientId: string;
@@ -13,8 +13,6 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: Settings;
   onSaveSettings: (settings: Settings) => void;
-  onSyncToGitHub: () => Promise<void>;
-  onSyncFromGitHub: () => Promise<void>;
   syncing: boolean;
   syncStatus: string;
   syncError: string;
@@ -27,8 +25,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   settings,
   onSaveSettings,
-  onSyncToGitHub,
-  onSyncFromGitHub,
   syncing,
   syncStatus,
   syncError,
@@ -36,8 +32,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onLogout,
 }) => {
   const [googleClientId, setGoogleClientId] = useState(settings.googleClientId);
-  const [githubPat, setGithubPat] = useState(settings.githubPat);
-  const [githubRepo, setGithubRepo] = useState(settings.githubRepo);
   const [theme, setTheme] = useState<'dark' | 'light'>(settings.theme);
 
   if (!isOpen) return null;
@@ -46,8 +40,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     e.preventDefault();
     onSaveSettings({
       googleClientId: googleClientId.trim(),
-      githubPat: githubPat.trim(),
-      githubRepo: githubRepo.trim(),
+      githubPat: settings.githubPat,
+      githubRepo: settings.githubRepo,
       theme,
     });
     onClose();
@@ -134,41 +128,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </span>
           </div>
 
-          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '12px' }}>GitHub Sync Integration</h3>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px', color: 'var(--text-secondary)' }}>
-                  GitHub Personal Access Token (PAT)
-                </label>
-                <input
-                  type="password"
-                  placeholder="ghp_xxxxxxxxxxxx"
-                  value={githubPat}
-                  onChange={(e) => setGithubPat(e.target.value)}
-                  className="input-field"
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px', color: 'var(--text-secondary)' }}>
-                  GitHub Sync Repository
-                </label>
-                <input
-                  type="text"
-                  placeholder="username/lit-reviews"
-                  value={githubRepo}
-                  onChange={(e) => setGithubRepo(e.target.value)}
-                  className="input-field"
-                />
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                  App will save projects, base64 PDFs, and notes (as Markdown) to this repository.
-                </span>
-              </div>
-            </div>
-          </div>
-
           {/* Sync operations status */}
           {(syncing || syncStatus || syncError) && (
             <div className={`sync-status ${syncError ? 'error' : syncStatus.includes('successfully') ? 'success' : ''}`}>
@@ -176,31 +135,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div style={{ flex: 1, fontSize: '0.75rem', wordBreak: 'break-word' }}>
                 {syncError || syncStatus}
               </div>
-            </div>
-          )}
-
-          {githubPat && githubRepo && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              <button
-                type="button"
-                disabled={syncing}
-                onClick={onSyncToGitHub}
-                className="btn-secondary"
-                style={{ fontSize: '0.8rem', gap: '6px', justifyContent: 'center' }}
-              >
-                <UploadCloud size={16} />
-                <span>Sync to GitHub</span>
-              </button>
-              <button
-                type="button"
-                disabled={syncing}
-                onClick={onSyncFromGitHub}
-                className="btn-secondary"
-                style={{ fontSize: '0.8rem', gap: '6px', justifyContent: 'center' }}
-              >
-                <DownloadCloud size={16} />
-                <span>Sync from GitHub</span>
-              </button>
             </div>
           )}
 

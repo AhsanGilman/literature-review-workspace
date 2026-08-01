@@ -1,5 +1,8 @@
 import { db, type Project, type Paper } from './db';
 
+const DEFAULT_TOKEN = (import.meta as any).env.VITE_GITHUB_PAT || '';
+const DEFAULT_REPO = (import.meta as any).env.VITE_GITHUB_REPO || 'AhsanGilman/literature-review-workspace';
+
 interface GitHubFile {
   path: string;
   sha: string;
@@ -186,13 +189,21 @@ async function uploadFileToGitHub(
 }
 
 export async function syncToGitHub(
-  token: string,
-  repo: string,
+  userEmail: string,
   onProgress?: (msg: string) => void
 ): Promise<void> {
+  const token = DEFAULT_TOKEN;
+  const repo = DEFAULT_REPO;
+  if (!token || !repo) {
+    console.warn('GitHub Sync skipped: VITE_GITHUB_PAT or VITE_GITHUB_REPO environment variable not set.');
+    return;
+  }
+
   onProgress?.('Initializing sync to GitHub...');
   const branch = await ensureRepoExists(token, repo);
   onProgress?.(`Found repository branch: ${branch}`);
+
+  const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
 
   // Fetch all local data
   const localProjects = await db.projects.toArray();
@@ -222,29 +233,27 @@ export async function syncToGitHub(
   await uploadFileToGitHub(
     token,
     repo,
-    'projects.json',
+    `${prefix}projects.json`,
     toBase64(projectsData),
     'Sync projects metadata',
-    remoteTree['projects.json']?.sha
+    remoteTree[`${prefix}projects.json`]?.sha
   );
 
   await uploadFileToGitHub(
     token,
     repo,
-    'papers_metadata.json',
+    `${prefix}papers_metadata.json`,
     toBase64(papersMetadataData),
     'Sync papers metadata',
-    remoteTree['papers_metadata.json']?.sha
+    remoteTree[`${prefix}papers_metadata.json`]?.sha
   );
 
   // 2. Sync papers PDFs
   for (const paper of localPapers) {
-    const pdfPath = `papers/${paper.id}.pdf`;
+    const pdfPath = `${prefix}papers/${paper.id}.pdf`;
     const remoteFile = remoteTree[pdfPath];
 
     // If PDF does not exist in repo, upload it.
-    // (To save rate limit / API calls, we assume PDFs are immutable once uploaded.
-    // If it exists, we skip uploading.)
     if (!remoteFile) {
       onProgress?.(`Uploading PDF: ${paper.title.slice(0, 30)}...`);
       const base64Content = await blobToBase64(paper.fileData);
@@ -263,7 +272,7 @@ export async function syncToGitHub(
   for (const note of localNotes) {
     const paper = localPapers.find((p) => p.id === note.paperId);
     const paperTitle = paper ? paper.title : note.paperId;
-    const notePath = `notes/${note.paperId}.md`;
+    const notePath = `${prefix}notes/${note.paperId}.md`;
     const remoteFile = remoteTree[notePath];
 
     // Write markdown content with yaml header for readability
@@ -279,7 +288,6 @@ ${note.content}`;
     const localBase64 = toBase64(mdContent);
 
     // Fetch the remote file first to compare or check if upload is needed.
-    // If it exists, check if contents are different (or we can just push and overwrite)
     onProgress?.(`Syncing note: ${paperTitle.slice(0, 30)}...`);
     await uploadFileToGitHub(
       token,
@@ -295,15 +303,23 @@ ${note.content}`;
 }
 
 export async function syncFromGitHub(
-  token: string,
-  repo: string,
+  userEmail: string,
   onProgress?: (msg: string) => void
 ): Promise<void> {
+  const token = DEFAULT_TOKEN;
+  const repo = DEFAULT_REPO;
+  if (!token || !repo) {
+    console.warn('GitHub Sync skipped: VITE_GITHUB_PAT or VITE_GITHUB_REPO environment variable not set.');
+    return;
+  }
+
   onProgress?.('Initializing sync from GitHub...');
   const branch = await ensureRepoExists(token, repo);
 
   onProgress?.('Fetching remote repository tree...');
   const remoteTree = await getRepoTree(token, repo, branch);
+
+  const prefix = `users/${userEmail.replace(/[^a-zA-Z0-9._-]/g, '_')}/`;
 
   const headers = {
     Authorization: `token ${token}`,
@@ -330,9 +346,10 @@ export async function syncFromGitHub(
   };
 
   // 1. Pull projects
-  if (remoteTree['projects.json']) {
+  const projectsPath = `${prefix}projects.json`;
+  if (remoteTree[projectsPath]) {
     onProgress?.('Syncing projects metadata...');
-    const projectsText = await fetchFileTextContent('projects.json');
+    const projectsText = await fetchFileTextContent(projectsPath);
     const projects: Project[] = JSON.parse(projectsText);
     for (const project of projects) {
       const existing = await db.projects.get(project.id);
@@ -343,13 +360,14 @@ export async function syncFromGitHub(
   }
 
   // 2. Pull papers metadata and PDFs
-  if (remoteTree['papers_metadata.json']) {
+  const papersMetaPath = `${prefix}papers_metadata.json`;
+  if (remoteTree[papersMetaPath]) {
     onProgress?.('Syncing papers metadata...');
-    const papersMetaText = await fetchFileTextContent('papers_metadata.json');
+    const papersMetaText = await fetchFileTextContent(papersMetaPath);
     const remotePapersMeta: Omit<Paper, 'fileData'>[] = JSON.parse(papersMetaText);
 
     for (const paperMeta of remotePapersMeta) {
-      const pdfPath = `papers/${paperMeta.id}.pdf`;
+      const pdfPath = `${prefix}papers/${paperMeta.id}.pdf`;
       const existingPaper = await db.papers.get(paperMeta.id);
 
       // Check if we need to insert or update the paper
@@ -372,10 +390,10 @@ export async function syncFromGitHub(
 
   // 3. Pull notes
   onProgress?.('Syncing notes...');
-  const notePaths = Object.keys(remoteTree).filter((path) => path.startsWith('notes/') && path.endsWith('.md'));
+  const notePaths = Object.keys(remoteTree).filter((path) => path.startsWith(`${prefix}notes/`) && path.endsWith('.md'));
   
   for (const path of notePaths) {
-    const paperId = path.replace('notes/', '').replace('.md', '');
+    const paperId = path.replace(`${prefix}notes/`, '').replace('.md', '');
     try {
       const mdContent = await fetchFileTextContent(path);
       
