@@ -28,7 +28,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [newProjectDesc, setNewProjectDesc] = useState('');
 
   // Form for paper metadata editing when uploading
-  const [pendingFile, setPendingFile] = useState<{ file: File; base64: string } | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
   const [paperTitle, setPaperTitle] = useState('');
   const [paperAuthors, setPaperAuthors] = useState('');
@@ -95,19 +95,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const processFile = (file: File) => {
     if (file.type !== 'application/pdf') return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
-      setPendingFile({ file, base64 });
-      // Pre-fill fields
-      const titleWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
-      setPaperTitle(titleWithoutExt);
-      setPaperAuthors('');
-      setPaperJournal('');
-      setPaperYear(new Date().getFullYear().toString());
-      setPaperTags('');
-    };
-    reader.readAsDataURL(file);
+    setPendingFile(file);
+    // Pre-fill fields
+    const titleWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+    setPaperTitle(titleWithoutExt);
+    setPaperAuthors('');
+    setPaperJournal('');
+    setPaperYear(new Date().getFullYear().toString());
+    setPaperTags('');
   };
 
   // Process multiple files in batch (no interrupting modals!)
@@ -118,47 +113,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const file = files[i];
       if (file.type !== 'application/pdf') continue;
 
-      await new Promise<void>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          try {
-            const base64 = reader.result as string;
-            const paperId = `paper-${Date.now()}-${i}`;
-            const titleWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+      try {
+        const paperId = `paper-${Date.now()}-${i}`;
+        const titleWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
 
-            // Save paper metadata and content to IndexedDB
-            await db.papers.add({
-              id: paperId,
-              projectId: currentProjectId,
-              title: titleWithoutExt,
-              authors: '',
-              journal: '',
-              year: new Date().getFullYear().toString(),
-              tags: [],
-              fileData: base64,
-              fileName: file.name,
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            });
+        // Save paper metadata and content to IndexedDB
+        await db.papers.add({
+          id: paperId,
+          projectId: currentProjectId,
+          title: titleWithoutExt,
+          authors: '',
+          journal: '',
+          year: new Date().getFullYear().toString(),
+          tags: [],
+          fileData: file, // Save raw file object directly
+          fileName: file.name,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
 
-            // Save default blank note for this paper
-            await db.notes.add({
-              id: paperId, // 1-to-1 matching id
-              paperId,
-              projectId: currentProjectId,
-              content: `# ${titleWithoutExt}\n\n*Authors: *\n*Journal: (${new Date().getFullYear().toString()})*\n\n## Abstract / Summary\n\n[Write summary here]\n\n## Key Findings\n\n- Finding 1\n\n## Critiques / Questions\n\n- Critique 1`,
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            });
+        // Save default blank note for this paper
+        await db.notes.add({
+          id: paperId, // 1-to-1 matching id
+          paperId,
+          projectId: currentProjectId,
+          content: `# ${titleWithoutExt}\n\n*Authors: *\n*Journal: (${new Date().getFullYear().toString()})*\n\n## Abstract / Summary\n\n[Write summary here]\n\n## Key Findings\n\n- Finding 1\n\n## Critiques / Questions\n\n- Critique 1`,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
 
-            importedCount++;
-          } catch (err) {
-            console.error('Error batch importing file:', file.name, err);
-          }
-          resolve();
-        };
-        reader.readAsDataURL(file);
-      });
+        importedCount++;
+      } catch (err) {
+        console.error('Error batch importing file:', file.name, err);
+      }
     }
 
     if (importedCount > 0) {
@@ -187,8 +174,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       journal: paperJournal.trim(),
       year: paperYear.trim(),
       tags: tagsArray,
-      fileData: pendingFile.base64,
-      fileName: pendingFile.file.name,
+      fileData: pendingFile, // Save file directly
+      fileName: pendingFile.name,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });

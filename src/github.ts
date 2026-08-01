@@ -6,6 +6,36 @@ interface GitHubFile {
   type: string;
 }
 
+// Helper to convert Blob to Base64 (used during sync to GitHub)
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        const base64 = reader.result.includes(',')
+          ? reader.result.split(',')[1]
+          : reader.result;
+        resolve(base64);
+      } else {
+        reject(new Error('Failed to read blob as Base64 string'));
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Helper to convert Base64 string to Blob (used during sync from GitHub)
+function base64ToBlob(base64: string, type = 'application/pdf'): Blob {
+  const byteCharacters = atob(base64);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  return new Blob([byteArray], { type });
+}
+
 export async function testGitHubToken(token: string): Promise<{ valid: boolean; username: string }> {
   try {
     const res = await fetch('https://api.github.com/user', {
@@ -211,10 +241,7 @@ export async function syncToGitHub(
     // If it exists, we skip uploading.)
     if (!remoteFile) {
       onProgress?.(`Uploading PDF: ${paper.title.slice(0, 30)}...`);
-      // paper.fileData is already a base64 string (without the data:application/pdf;base64, prefix)
-      const base64Content = paper.fileData.includes(',')
-        ? paper.fileData.split(',')[1]
-        : paper.fileData;
+      const base64Content = await blobToBase64(paper.fileData);
 
       await uploadFileToGitHub(
         token,
@@ -322,14 +349,15 @@ export async function syncFromGitHub(
       // Check if we need to insert or update the paper
       if (!existingPaper || existingPaper.updatedAt < paperMeta.updatedAt) {
         onProgress?.(`Fetching PDF for: ${paperMeta.title.slice(0, 30)}...`);
-        let fileData = '';
+        let fileBlob = new Blob([], { type: 'application/pdf' });
         if (remoteTree[pdfPath]) {
-          fileData = await fetchFileBase64Content(pdfPath);
+          const base64 = await fetchFileBase64Content(pdfPath);
+          fileBlob = base64ToBlob(base64);
         }
 
         const fullPaper: Paper = {
           ...paperMeta,
-          fileData,
+          fileData: fileBlob,
         };
         await db.papers.put(fullPaper);
       }

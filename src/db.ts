@@ -16,7 +16,7 @@ export interface Paper {
   journal: string;
   year: string;
   tags: string[];
-  fileData: string; // Base64 encoded PDF string
+  fileData: Blob; // Raw PDF Blob
   fileName: string;
   createdAt: number;
   updatedAt: number;
