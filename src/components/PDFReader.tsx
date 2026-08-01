@@ -26,7 +26,23 @@ export const PDFReader: React.FC<PDFReaderProps> = ({ paperId }) => {
     setLoading(true);
     let url = '';
     try {
-      url = URL.createObjectURL(paper.fileData);
+      let fileBlob: Blob;
+      if (typeof paper.fileData === 'string') {
+        // Decode base64 to Blob for old uploads
+        const base64Data = (paper.fileData as string).includes(',')
+          ? (paper.fileData as string).split(',')[1]
+          : (paper.fileData as string);
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        fileBlob = new Blob([byteArray], { type: 'application/pdf' });
+      } else {
+        fileBlob = paper.fileData;
+      }
+      url = URL.createObjectURL(fileBlob);
       setBlobUrl(url);
     } catch (error) {
       console.error('Error generating PDF Blob URL:', error);

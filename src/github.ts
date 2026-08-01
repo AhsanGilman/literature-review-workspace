@@ -7,7 +7,13 @@ interface GitHubFile {
 }
 
 // Helper to convert Blob to Base64 (used during sync to GitHub)
-function blobToBase64(blob: Blob): Promise<string> {
+function blobToBase64(blob: Blob | string): Promise<string> {
+  if (typeof blob === 'string') {
+    const base64 = blob.includes(',')
+      ? blob.split(',')[1]
+      : blob;
+    return Promise.resolve(base64);
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
