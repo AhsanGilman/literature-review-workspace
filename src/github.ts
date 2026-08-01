@@ -173,10 +173,28 @@ async function uploadFileToGitHub(
     'Content-Type': 'application/json',
   };
 
+  let currentSha = sha;
+  if (!currentSha) {
+    try {
+      const getRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+        }
+      });
+      if (getRes.ok) {
+        const getData = await getRes.json();
+        currentSha = getData.sha;
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch current SHA for ${path}:`, e);
+    }
+  }
+
   const body = {
     message,
     content: contentBase64,
-    sha,
+    sha: currentSha,
   };
 
   const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
