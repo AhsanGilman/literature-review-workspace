@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { db, type Paper } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Loader2 } from 'lucide-react';
+import { parsePdfTitle } from '../pdfParser';
 
 interface PDFReaderProps {
   paperId: string;
@@ -55,6 +56,53 @@ export const PDFReader: React.FC<PDFReaderProps> = ({ paperId }) => {
         URL.revokeObjectURL(url);
       }
     };
+  }, [paper]);
+
+  // Self-healing title update: If the paper has a generic title (ends in .pdf, matches fileName, or is a short number), re-parse it
+  useEffect(() => {
+    if (!paper) return;
+
+    const currentTitle = (paper.title || '').trim();
+    const isGeneric = 
+      currentTitle === paper.fileName || 
+      currentTitle.toLowerCase().endsWith('.pdf') ||
+      /^\d+$/.test(currentTitle) ||
+      currentTitle.length <= 4;
+
+    if (isGeneric) {
+      const healTitle = async () => {
+        try {
+          let fileBlob: Blob;
+          if (typeof paper.fileData === 'string') {
+            const base64Data = (paper.fileData as string).includes(',')
+              ? (paper.fileData as string).split(',')[1]
+              : (paper.fileData as string);
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            fileBlob = new Blob([byteArray], { type: 'application/pdf' });
+          } else {
+            fileBlob = paper.fileData;
+          }
+
+          const detectedTitle = await parsePdfTitle(fileBlob, paper.fileName || 'document.pdf');
+          if (detectedTitle && detectedTitle.trim() !== currentTitle) {
+            console.log(`Self-healed paper title from "${currentTitle}" to "${detectedTitle}"`);
+            await db.papers.update(paper.id, { 
+              title: detectedTitle.trim(),
+              updatedAt: Date.now()
+            });
+            await db.projects.update(paper.projectId, { updatedAt: Date.now() });
+          }
+        } catch (e) {
+          console.warn('Self-healing title extraction failed:', e);
+        }
+      };
+      healTitle();
+    }
   }, [paper]);
 
   if (!paperId) {
